@@ -2,7 +2,7 @@
 
 **Turn any business catalogue into everything AI agents need to find, price, book and buy.**
 
-The Gentifi Toolkit is free and open source. Point it at a catalogue (Shopify, CSV, WooCommerce or a booking system) and it generates the files and server an AI agent needs to work with the business: an MCP server, UCP profile, SKILL.md, A2A agent card and ai-catalog.json.
+The Gentifi Toolkit is open source. Point it at a catalogue (Shopify, CSV, WooCommerce or a booking system) and it generates the files and server an AI agent needs to work with the business: an MCP server, UCP profile, SKILL.md, A2A agent card and ai-catalog.json.
 
 It works for consumers (B2C) and business buyers (B2B) on the same rails.
 
