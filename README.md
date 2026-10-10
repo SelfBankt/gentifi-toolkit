@@ -8,6 +8,16 @@ It works for consumers (B2C) and business buyers (B2B) on the same rails.
 
 > **Status: early concept.** The command-line interface and project layout are in place; the commands themselves are not implemented yet. Each one prints what it will do. Issues and ideas are welcome.
 
+## Set up with your coding agent
+
+Paste this into Claude Code or any coding agent:
+
+```
+Set up https://raw.githubusercontent.com/SelfBankt/gentifi-toolkit/main/SKILL.md
+```
+
+[SKILL.md](SKILL.md) is an [Agent Skill](https://agentskills.io) that walks the agent through running the toolkit for your business, and asks you before anything goes public.
+
 ## Commands
 
 ```bash
@@ -62,6 +72,7 @@ npm test
 ## Project layout
 
 ```
+SKILL.md                Agent Skill for coding agents
 bin/gentifi.js          CLI entry point
 src/cli.js              argument parsing and command dispatch
 src/commands/           init, build, check, publish
