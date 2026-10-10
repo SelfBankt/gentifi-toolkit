@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.gentifi/
+*.log
+.DS_Store

@@ -1,0 +1,22 @@
+{
+  "name": "gentifi-toolkit",
+  "version": "0.0.1",
+  "description": "Turn any business catalogue into everything AI agents need to find, price, book and buy.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "gentifi": "./bin/gentifi.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": ["mcp", "agents", "skill.md", "a2a", "ucp", "ai-catalog", "commerce"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SelfBankt/gentifi-toolkit.git"
+  }
+}
