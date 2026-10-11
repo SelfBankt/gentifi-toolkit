@@ -22,7 +22,7 @@ Useful places to start:
 - **A format:** add a generator to `src/lib/outputs.js` and a validator to `src/lib/validate.js`, so `gentifi check` can test it.
 - **A wallet or payment rail (prototype):** add an adapter next to `src/payments/lightning.js` or a facilitator in `src/payments/x402.js`. Test it against simulated rails in `gentifi check`, never a real node.
 
-`test/fixtures/qr-reference.json` holds QR matrices from an independent encoder; `test/qr.test.js` compares against them. `test/payments.test.js` checks the payment code against the published BOLT 11 and x402 test vectors.
+`test/fixtures/qr-reference.json` holds QR matrices from an independent encoder; `test/qr.test.js` compares against them. `test/payments.test.js` checks the payment code against the published BOLT 11 and x402 test vectors, and the Permit2 (USDT) signatures against values computed with an independent EIP-712 implementation.
 
 ## Ground rules
 

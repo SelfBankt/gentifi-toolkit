@@ -12,8 +12,11 @@
 //   Lightning, simulated (default when the server runs a simulated node): no money moves.
 //   Lightning, your own LND node: --lnd-url https://127.0.0.1:8080 [--lnd-cert tls.cert]
 //     with GENTIFI_PAYER_MACAROON set to a macaroon allowed to send payments (hex).
-//   USDC on Base Sepolia: GENTIFI_PAYER_KEY set to a test wallet's private key (hex).
-//     Without it, a throwaway key is used, which only a simulated facilitator accepts.
+//   USDC or USDT (--rail usdc | usdt): GENTIFI_PAYER_KEY set to a test wallet's private
+//     key (hex). Without it, a throwaway key is used, which only a simulated facilitator
+//     accepts. USDT is paid with Permit2, which a real wallet approves once per token.
+//   USDT on Lightning: a wallet holding USDT through Taproot Assets pays the Lightning
+//     invoice like any other; its edge node converts, and the business receives bitcoin.
 
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
@@ -21,8 +24,8 @@ import { parseArgs } from 'node:util';
 import { McpHttpClient } from '../src/mcp/client.js';
 import { decodeInvoice } from '../src/payments/bolt11.js';
 import { lndNode, randomPrivateKey } from '../src/payments/lightning.js';
-import { formatSats, formatUsdc } from '../src/payments/quote.js';
-import { MCP_PAYMENT_KEY, MCP_PAYMENT_RESPONSE_KEY, isLnbtc, mcpRequestHash, signTransferAuthorization } from '../src/payments/x402.js';
+import { formatSats, formatToken } from '../src/payments/quote.js';
+import { MCP_PAYMENT_KEY, MCP_PAYMENT_RESPONSE_KEY, isLnbtc, mcpRequestHash, signEvmPayment, transferMethodOf } from '../src/payments/x402.js';
 
 const { values } = parseArgs({
   options: {
@@ -85,12 +88,13 @@ const challenge = await call(confirmed);
 const required = challenge.structuredContent;
 if (!challenge.isError || required?.x402Version !== 2) stop(`Expected a payment request, got: ${challenge.content?.[0]?.text}`);
 say(`\nPayment request: ${required.resource.description}`);
-const preferred = values.rail === 'usdc' ? (r) => !isLnbtc(r.network) : values.rail === 'lightning' ? (r) => isLnbtc(r.network) : () => true;
-const requirement = required.accepts.find(preferred);
+// Each option is matched to a published payee by network and asset
+const payeeFor = (r) => payees.find((p) => p.network === r.network && p.asset.toLowerCase() === String(r.asset).toLowerCase());
+const requirement = required.accepts.find((r) => !values.rail || payeeFor(r)?.rail === values.rail);
 if (!requirement) stop(`No ${values.rail} option offered.`);
 
 // 4. Check it before paying: right payee, right order, right amount
-const payee = payees.find((p) => p.network === requirement.network);
+const payee = payeeFor(requirement);
 if (!payee || payee.payTo.toLowerCase() !== requirement.payTo.toLowerCase()) stop('The request pays someone other than the business’s published payee. Not paying.');
 let payload;
 if (isLnbtc(requirement.network)) {
@@ -121,10 +125,13 @@ if (isLnbtc(requirement.network)) {
   if (sha256(paid.preimage) !== inv.paymentHash) stop('The payment proof does not match the invoice.');
   payload = { preimage: paid.preimage };
 } else {
+  say(`  ✓ it pays the address the business publishes for ${payee.symbol}`);
   const key = process.env.GENTIFI_PAYER_KEY ? Buffer.from(process.env.GENTIFI_PAYER_KEY.replace(/^0x/, ''), 'hex') : randomPrivateKey();
   if (!process.env.GENTIFI_PAYER_KEY) say('  (no GENTIFI_PAYER_KEY: using a throwaway key, which only a simulated facilitator accepts)');
-  say(`\nSigning a payment of ${formatUsdc(requirement.amount)} to ${requirement.payTo}…`);
-  payload = signTransferAuthorization({ privateKey: key, requirement, now: Math.floor(Date.now() / 1000) });
+  const permit2 = transferMethodOf(requirement) === 'permit2';
+  say(`\nSigning ${permit2 ? 'a Permit2 payment' : 'a payment'} of ${formatToken(requirement.amount, payee.symbol, payee.decimals)} to ${requirement.payTo}…`);
+  if (permit2) say('  (on a real network, the wallet approves Permit2 for this token once, before its first payment)');
+  payload = signEvmPayment({ privateKey: key, requirement, now: Math.floor(Date.now() / 1000) });
 }
 
 // 5. Send the proof; the business records the order

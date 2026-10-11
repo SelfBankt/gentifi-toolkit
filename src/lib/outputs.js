@@ -174,7 +174,7 @@ export function jsonLd(project, payees = []) {
     ...(hasAddress ? { address: { '@type': 'PostalAddress', streetAddress: a.street || undefined, addressLocality: a.locality || undefined, postalCode: a.postcode || undefined, addressCountry: 'GB' } } : {}),
     ...(b.area ? { areaServed: b.area } : {}),
     ...(b.openingHours?.length ? { openingHours: b.openingHours } : {}),
-    ...(payees.length ? { paymentAccepted: payees.map((p) => (p.rail === 'lightning' ? 'Lightning (bitcoin)' : 'USDC')).join(', ') } : {}),
+    ...(payees.length ? { paymentAccepted: payees.map((p) => (p.rail === 'lightning' ? 'Lightning (bitcoin)' : p.symbol)).join(', ') } : {}),
     hasOfferCatalog: {
       '@type': 'OfferCatalog',
       name: `${b.name} catalogue`,
@@ -202,6 +202,11 @@ export function jsonLd(project, payees = []) {
 const md = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 
 /** An Agent Skill for headless and self-built agents. Information first; the customer decides. */
+const railNames = (payees) => {
+  const names = payees.map((p) => (p.rail === 'lightning' ? 'Lightning' : p.symbol));
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0];
+};
+
 export function skillMd(project, toolkitVersion, payees = []) {
   const b = project.business;
   const items = project.catalogue.items;
@@ -251,7 +256,7 @@ ${b.openingHours?.length ? `\n## Opening hours\n\n${b.openingHours.map((h) => `-
 
 ${ordering}${o.notes ? ` ${md(o.notes)}` : ''}
 
-${payees.length ? `If your app can show the customer a confirmation, \`pay_order\` takes payment by ${payees.map((p) => (p.rail === 'lightning' ? 'Lightning' : 'USDC')).join(' or ')}. It asks the customer first, and its payment requests pay only the payees listed in ${b.name}'s discovery manifest. Otherwise use \`prepare_order\`.\n\n` : ''}Nothing is ever ordered automatically. Before anything is bought, booked or sent:
+${payees.length ? `If your app can show the customer a confirmation, \`pay_order\` takes payment by ${railNames(payees)}. It asks the customer first, and its payment requests pay only the payees listed in ${b.name}'s discovery manifest. Otherwise use \`prepare_order\`.\n\n` : ''}Nothing is ever ordered automatically. Before anything is bought, booked or sent:
 
 1. Show the user the items, quantities and total.
 2. Let them confirm it themselves. Only send, book or pay when they say so, through ${b.name}'s own checkout, booking page, email or phone.

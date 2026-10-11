@@ -32,7 +32,10 @@ export function simulatedLightningRoutes(payments) {
 function describePayments(payments) {
   const lines = [];
   if (payments.lightning) lines.push(`  Lightning       ${payments.lightning.simulated ? 'simulated node (no real money)' : 'LND'} on ${payments.lightning.network}, paying ${payments.lightning.payTo.slice(0, 16)}…`);
-  if (payments.usdc) lines.push(`  USDC            ${payments.usdc.token.label}, ${payments.usdc.simulated ? 'simulated settlement (no real money)' : 'settled by the facilitator'}, paying ${payments.usdc.payTo}`);
+  for (const c of payments.coins) {
+    const method = c.token.transferMethod === 'permit2' ? 'paid with Permit2, ' : '';
+    lines.push(`  ${c.symbol.padEnd(16)}${c.token.label}, ${method}${c.simulated ? 'simulated settlement (no real money)' : 'settled by the facilitator'}, paying ${c.payTo}`);
+  }
   return lines;
 }
 

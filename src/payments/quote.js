@@ -23,21 +23,26 @@ export function penceToMsat(pence, gbpPerBtc) {
   return ceilDiv(BigInt(pence) * den * 1000000000n, num);
 }
 
-/** Pence to USDC atomic units (6 decimals), given dollars per pound. */
-export function penceToUsdcUnits(pence, usdPerGbp) {
+/** Pence to a dollar token's atomic units, given dollars per pound. USDC and USDT use 6 decimals. */
+export function penceToTokenUnits(pence, usdPerGbp, decimals = 6) {
   const { num, den } = parseRate(usdPerGbp, 'USD');
-  // units = pence / 100 * (num / den) * 1e6
-  return ceilDiv(BigInt(pence) * num * 10000n, den);
+  // units = pence / 100 * (num / den) * 10^decimals
+  return ceilDiv(BigInt(pence) * num * 10n ** BigInt(decimals), 100n * den);
 }
+
+export const penceToUsdcUnits = (pence, usdPerGbp) => penceToTokenUnits(pence, usdPerGbp, 6);
 
 export function formatSats(msat) {
   const sats = Number(BigInt(msat) / 1000n);
   return `${sats.toLocaleString('en-GB')} sats`;
 }
 
-/** 8128000 -> "8.128 USDC"; always at least two decimals. */
-export function formatUsdc(units) {
+/** (8128000, 'USDT') -> "8.128 USDT"; always at least two decimals. */
+export function formatToken(units, symbol, decimals = 6) {
   const v = BigInt(units);
-  const frac = String(v % 1000000n).padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
-  return `${v / 1000000n}.${frac} USDC`;
+  const scale = 10n ** BigInt(decimals);
+  const frac = String(v % scale).padStart(decimals, '0').replace(/0+$/, '').padEnd(2, '0');
+  return `${v / scale}.${frac} ${symbol}`;
 }
+
+export const formatUsdc = (units) => formatToken(units, 'USDC', 6);

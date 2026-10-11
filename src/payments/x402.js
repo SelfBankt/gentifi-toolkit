@@ -8,7 +8,8 @@ import { bigIntToBytes, bytesToBigInt, recover, sign, uncompressed, publicKeyPoi
  * x402 version 2 (github.com/x402-foundation/x402): the PaymentRequired,
  * PaymentPayload and SettlementResponse shapes, the MCP transport keys, the
  * `exact` scheme on Lightning (`lnbtc`, with request binding) and the `exact`
- * scheme on EVM chains using EIP-3009 (USDC).
+ * scheme on EVM chains, using EIP-3009 (USDC) or Permit2 (USDT and any other
+ * ERC-20 without EIP-3009).
  */
 
 export const X402_VERSION = 2;
@@ -159,9 +160,13 @@ export async function settleLnbtc({ requirements: req, payload: pp, now, skew = 
 // --- EVM: exact with EIP-3009 (USDC) ---
 
 export const USDC = {
-  'eip155:84532': { asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', name: 'USDC', version: '2', decimals: 6, label: 'USDC on Base Sepolia (test network)' },
+  'eip155:84532': { asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', transferMethod: 'eip3009', name: 'USDC', version: '2', decimals: 6, symbol: 'USDC', label: 'USDC on Base Sepolia (test network)' },
 };
 
+export const transferMethodOf = (requirement) => requirement?.extra?.assetTransferMethod ?? 'eip3009';
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const UINT = /^(0|[1-9][0-9]{0,77})$/;
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const strip0x = (h) => String(h).replace(/^0x/i, '');
 const word = (hex) => Buffer.from(strip0x(hex).padStart(64, '0'), 'hex');
 const uintWord = (n) => bigIntToBytes(BigInt(n));
@@ -187,6 +192,18 @@ export function transferDigest({ name, version, chainId, verifyingContract }, a)
 }
 
 const chainIdOf = (network) => BigInt(network.split(':')[1]);
+const encodeSignature = ({ r, s, recid }) => `0x${Buffer.concat([bigIntToBytes(r), bigIntToBytes(s), Buffer.from([27 + recid])]).toString('hex')}`;
+
+/** The address that signed `digest` with a 65-byte signature, or null. */
+function recoverAddress(digest, signature) {
+  const sig = Buffer.from(strip0x(signature), 'hex');
+  if (sig.length !== 65) return null;
+  const v = sig[64] >= 27 ? sig[64] - 27 : sig[64];
+  const point = recover(digest, bytesToBigInt(sig.subarray(0, 32)), bytesToBigInt(sig.subarray(32, 64)), v);
+  return point ? checksumAddress(keccak256(uncompressed(point)).subarray(12).toString('hex')) : null;
+}
+
+const eip3009Domain = (requirement) => ({ name: requirement.extra.name, version: requirement.extra.version, chainId: chainIdOf(requirement.network), verifyingContract: requirement.asset });
 
 /** Signs an authorization that pays `requirement` (client side: the demo payer and tests). */
 export function signTransferAuthorization({ privateKey, requirement, now, nonce }) {
@@ -198,34 +215,75 @@ export function signTransferAuthorization({ privateKey, requirement, now, nonce 
     validBefore: String(now + requirement.maxTimeoutSeconds),
     nonce: nonce ?? `0x${randomBytes(32).toString('hex')}`,
   };
-  const digest = transferDigest({ name: requirement.extra.name, version: requirement.extra.version, chainId: chainIdOf(requirement.network), verifyingContract: requirement.asset }, authorization);
-  const { r, s, recid } = sign(digest, privateKey);
-  const signature = `0x${Buffer.concat([bigIntToBytes(r), bigIntToBytes(s), Buffer.from([27 + recid])]).toString('hex')}`;
-  return { signature, authorization };
+  return { signature: encodeSignature(sign(transferDigest(eip3009Domain(requirement), authorization), privateKey)), authorization };
 }
 
 /** Recovers the signer of an EIP-3009 authorization signature, or null. */
 export function recoverTransferSigner(requirement, { signature, authorization }) {
-  const sig = Buffer.from(strip0x(signature), 'hex');
-  if (sig.length !== 65) return null;
-  const v = sig[64] >= 27 ? sig[64] - 27 : sig[64];
-  const digest = transferDigest({ name: requirement.extra.name, version: requirement.extra.version, chainId: chainIdOf(requirement.network), verifyingContract: requirement.asset }, authorization);
-  const point = recover(digest, bytesToBigInt(sig.subarray(0, 32)), bytesToBigInt(sig.subarray(32, 64)), v);
-  return point ? checksumAddress(keccak256(uncompressed(point)).subarray(12).toString('hex')) : null;
+  return recoverAddress(transferDigest(eip3009Domain(requirement), authorization), signature);
+}
+
+// --- EVM: exact with Permit2 (USDT, and any ERC-20 without EIP-3009) ---
+
+/** Uniswap's canonical Permit2, and x402's proxy, which only pays the address in the signed witness. Same on every chain. */
+export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+export const X402_EXACT_PERMIT2_PROXY = '0x402085c248EeA27D92E8b30b2C58ed07f9E20001';
+const PERMIT2_DOMAIN_TYPEHASH = keccak256('EIP712Domain(string name,uint256 chainId,address verifyingContract)');
+export const TOKEN_PERMISSIONS_TYPEHASH = keccak256('TokenPermissions(address token,uint256 amount)');
+const WITNESS_TYPEHASH = keccak256('Witness(address to,uint256 validAfter)');
+export const PERMIT_WITNESS_TYPEHASH = keccak256('PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,Witness witness)TokenPermissions(address token,uint256 amount)Witness(address to,uint256 validAfter)');
+
+/** EIP-712 digest of a Permit2 PermitWitnessTransferFrom carrying the x402 `exact` witness. */
+export function permit2Digest(chainId, a) {
+  const domain = keccak256(Buffer.concat([PERMIT2_DOMAIN_TYPEHASH, keccak256('Permit2'), uintWord(chainId), word(PERMIT2_ADDRESS)]));
+  const permitted = keccak256(Buffer.concat([TOKEN_PERMISSIONS_TYPEHASH, word(a.permitted.token), uintWord(a.permitted.amount)]));
+  const witness = keccak256(Buffer.concat([WITNESS_TYPEHASH, word(a.witness.to), uintWord(a.witness.validAfter)]));
+  const struct = keccak256(Buffer.concat([PERMIT_WITNESS_TYPEHASH, permitted, word(a.spender), uintWord(a.nonce), uintWord(a.deadline), witness]));
+  return keccak256(Buffer.concat([Buffer.from([0x19, 0x01]), domain, struct]));
+}
+
+/**
+ * Signs a Permit2 transfer that pays `requirement` through x402's proxy, as the
+ * reference client does: validAfter 0, deadline now + maxTimeoutSeconds and a
+ * random 256-bit nonce. On a real network the payer must first approve Permit2
+ * for the token, once.
+ */
+export function signPermit2Authorization({ privateKey, requirement, now, nonce }) {
+  const permit2Authorization = {
+    from: addressFromPrivateKey(privateKey),
+    permitted: { token: checksumAddress(requirement.asset), amount: requirement.amount },
+    spender: X402_EXACT_PERMIT2_PROXY,
+    nonce: nonce ?? BigInt(`0x${randomBytes(32).toString('hex')}`).toString(),
+    deadline: String(now + requirement.maxTimeoutSeconds),
+    witness: { to: checksumAddress(requirement.payTo), validAfter: '0' },
+  };
+  return { signature: encodeSignature(sign(permit2Digest(chainIdOf(requirement.network), permit2Authorization), privateKey)), permit2Authorization };
+}
+
+/** Recovers the signer of a Permit2 authorization signature, or null. */
+export function recoverPermit2Signer(requirement, { signature, permit2Authorization }) {
+  return recoverAddress(permit2Digest(chainIdOf(requirement.network), permit2Authorization), signature);
+}
+
+/** Signs whichever EVM transfer method the requirement asks for. */
+export function signEvmPayment({ privateKey, requirement, now }) {
+  return transferMethodOf(requirement) === 'permit2'
+    ? signPermit2Authorization({ privateKey, requirement, now })
+    : signTransferAuthorization({ privateKey, requirement, now });
+}
+
+/** PaymentRequirements for an EVM token: `token` is { asset, transferMethod: 'eip3009' | 'permit2', name?, version? }. */
+export function evmRequirement({ token, network, amount, payTo, maxTimeoutSeconds }) {
+  const extra = token.transferMethod === 'permit2'
+    ? { assetTransferMethod: 'permit2' }
+    : { assetTransferMethod: 'eip3009', name: token.name, version: token.version };
+  return { scheme: 'exact', network, amount: String(amount), asset: token.asset, payTo, maxTimeoutSeconds, extra };
 }
 
 export function usdcRequirement({ network, amount, payTo, maxTimeoutSeconds }) {
   const token = USDC[network];
   if (!token) throw new Error(`No USDC settings for ${network}`);
-  return {
-    scheme: 'exact',
-    network,
-    amount: String(amount),
-    asset: token.asset,
-    payTo,
-    maxTimeoutSeconds,
-    extra: { assetTransferMethod: 'eip3009', name: token.name, version: token.version },
-  };
+  return evmRequirement({ token, network, amount, payTo, maxTimeoutSeconds });
 }
 
 /** Facilitator over HTTP: POST /verify then /settle (x402 v2, section 7). */
@@ -250,30 +308,59 @@ export function remoteFacilitator(url, { fetchImpl = globalThis.fetch } = {}) {
 
 /**
  * A stand-in facilitator for development: checks the EIP-712 signature, payee,
- * amount, time window and nonce locally, and returns a simulated transaction.
- * No funds move.
+ * token, amount, time window and nonce locally, and returns a simulated
+ * transaction. No funds move. It can't see a chain, so it assumes the payer
+ * has the balance and, for Permit2, has approved Permit2 for the token.
+ * Error codes follow the x402 specification and its reference facilitator.
  */
 export function simulatedEvmFacilitator({ claim, now = () => Math.floor(Date.now() / 1000) }) {
-  const check = (pp, req) => {
-    const a = pp?.payload?.authorization;
-    if (!a || typeof pp.payload.signature !== 'string') return { isValid: false, invalidReason: 'invalid_payload' };
-    if (pp.accepted?.network !== req.network) return { isValid: false, invalidReason: 'invalid_network' };
-    const signer = recoverTransferSigner(req, pp.payload);
-    if (!signer || signer.toLowerCase() !== String(a.from).toLowerCase()) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_signature' };
-    if (String(a.to).toLowerCase() !== req.payTo.toLowerCase()) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_recipient_mismatch' };
-    if (String(a.value) !== String(req.amount)) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_value_mismatch' };
+  const invalid = (invalidReason) => ({ isValid: false, invalidReason });
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  const eip3009 = (payload, req) => {
+    const a = payload.authorization;
+    if (!a || typeof payload.signature !== 'string' || ![a.from, a.to].every((x) => ADDRESS.test(x ?? ''))
+      || ![a.value, a.validAfter, a.validBefore].every((x) => UINT.test(x ?? '')) || !BYTES32.test(a.nonce ?? '')) return invalid('invalid_payload');
+    const signer = recoverTransferSigner(req, payload);
+    if (!signer || !same(signer, a.from)) return invalid('invalid_exact_evm_payload_signature');
+    if (!same(a.to, req.payTo)) return invalid('invalid_exact_evm_payload_recipient_mismatch');
+    if (a.value !== String(req.amount)) return invalid('invalid_exact_evm_payload_authorization_value_mismatch');
     const t = now();
-    if (t < Number(a.validAfter)) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_valid_after' };
-    if (t >= Number(a.validBefore)) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_valid_before' };
+    if (t < Number(a.validAfter)) return invalid('invalid_exact_evm_payload_authorization_valid_after');
+    if (t >= Number(a.validBefore)) return invalid('invalid_exact_evm_payload_authorization_valid_before');
     return { isValid: true, payer: signer };
   };
+  const permit2 = (payload, req) => {
+    const a = payload.permit2Authorization;
+    if (!a?.permitted || !a.witness || typeof payload.signature !== 'string'
+      || ![a.from, a.spender, a.permitted.token, a.witness.to].every((x) => ADDRESS.test(x ?? ''))
+      || ![a.permitted.amount, a.nonce, a.deadline, a.witness.validAfter].every((x) => UINT.test(x ?? ''))) return invalid('invalid_payload');
+    const signer = recoverPermit2Signer(req, payload);
+    if (!signer || !same(signer, a.from)) return invalid('invalid_permit2_signature');
+    if (!same(a.spender, X402_EXACT_PERMIT2_PROXY)) return invalid('invalid_permit2_spender');
+    if (!same(a.witness.to, req.payTo)) return invalid('invalid_permit2_recipient_mismatch');
+    if (!same(a.permitted.token, req.asset)) return invalid('permit2_token_mismatch');
+    if (a.permitted.amount !== String(req.amount)) return invalid('permit2_amount_mismatch');
+    const t = now();
+    if (t > Number(a.deadline)) return invalid('permit2_deadline_expired');
+    if (t < Number(a.witness.validAfter)) return invalid('permit2_not_yet_valid');
+    return { isValid: true, payer: signer };
+  };
+  const check = (pp, req) => {
+    if (!pp?.payload || typeof pp.payload !== 'object') return invalid('invalid_payload');
+    if (pp.accepted?.network !== req.network) return invalid('invalid_network');
+    return transferMethodOf(req) === 'permit2' ? permit2(pp.payload, req) : eip3009(pp.payload, req);
+  };
+  // Permit2 nonces belong to the payer; EIP-3009 nonces are random 32-byte values
+  const nonceKey = (pp, req) => (transferMethodOf(req) === 'permit2'
+    ? `${req.network}:permit2:${pp.payload.permit2Authorization.from.toLowerCase()}:${pp.payload.permit2Authorization.nonce}`
+    : `${req.network}:${pp.payload.authorization.nonce.toLowerCase()}`);
   return {
     simulated: true,
     verify: async (pp, req) => check(pp, req),
     settle: async (pp, req) => {
       const v = check(pp, req);
       if (!v.isValid) return { success: false, errorReason: v.invalidReason, transaction: '', network: req.network };
-      if (!(await claim(`${req.network}:${String(pp.payload.authorization.nonce).toLowerCase()}`))) {
+      if (!(await claim(nonceKey(pp, req)))) {
         return { success: false, errorReason: 'duplicate_settlement', transaction: '', network: req.network };
       }
       const tx = `0x${keccak256(Buffer.from(jcs(pp.payload), 'utf8')).toString('hex')}`;

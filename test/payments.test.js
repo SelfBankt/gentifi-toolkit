@@ -1,16 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { publicKey, publicKeyPoint, sign, recover, compress, N } from '../src/payments/secp256k1.js';
+import { bigIntToBytes, publicKey, publicKeyPoint, sign, recover, compress, N } from '../src/payments/secp256k1.js';
 import { keccak256 } from '../src/payments/keccak.js';
 import { DEFAULT_FEATURES, decodeInvoice, encodeInvoice } from '../src/payments/bolt11.js';
 import { jcs } from '../src/payments/jcs.js';
-import { formatSats, formatUsdc, penceToMsat, penceToUsdcUnits } from '../src/payments/quote.js';
+import { formatSats, formatToken, formatUsdc, penceToMsat, penceToTokenUnits, penceToUsdcUnits } from '../src/payments/quote.js';
 import { memoryStore, openState, sealState } from '../src/payments/store.js';
 import { simulatedNode } from '../src/payments/lightning.js';
 import {
-  LNBTC, TRANSFER_TYPEHASH, addressFromPrivateKey, checkChallengeInvoice, lnbtcRequirement, mcpRequestHash,
-  recoverTransferSigner, settleLnbtc, signTransferAuthorization, simulatedEvmFacilitator, usdcRequirement,
+  LNBTC, TOKEN_PERMISSIONS_TYPEHASH, TRANSFER_TYPEHASH, X402_EXACT_PERMIT2_PROXY, addressFromPrivateKey, checkChallengeInvoice,
+  evmRequirement, lnbtcRequirement, mcpRequestHash, permit2Digest, recoverPermit2Signer, recoverTransferSigner, settleLnbtc,
+  signPermit2Authorization, signTransferAuthorization, simulatedEvmFacilitator, usdcRequirement,
 } from '../src/payments/x402.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -167,6 +168,61 @@ test('x402 EVM: EIP-3009 authorisations recover to the payer, and the simulated 
   assert.equal((await expired.verify(payload, requirement)).invalidReason, 'invalid_exact_evm_payload_authorization_valid_before');
 });
 
+// --- x402 exact on EVM with Permit2 (USDT) ---
+
+// Values from the x402 Permit2 example; the digest and signature were computed
+// independently with ethers 6.16.0 (TypedDataEncoder.hash and Wallet.signTypedData)
+const PERMIT2_REQUIREMENT = {
+  scheme: 'exact', network: 'eip155:84532', amount: '13843000', asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  payTo: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C', maxTimeoutSeconds: 300, extra: { assetTransferMethod: 'permit2' },
+};
+const PERMIT2_NONCE = '33247007178036348590600198031289925668252061821958005840077069883511451257277';
+
+test('x402 Permit2: digests and signatures match an independent EIP-712 implementation', () => {
+  assert.equal(hex(TOKEN_PERMISSIONS_TYPEHASH), '618358ac3db8dc274f0cd8829da7e234bd48cd73c4a740aede1adec9846d06a1');
+  const signed = signPermit2Authorization({ privateKey: 42n, requirement: PERMIT2_REQUIREMENT, now: 1740672000, nonce: PERMIT2_NONCE });
+  assert.deepEqual(signed.permit2Authorization, {
+    from: '0xae3DfFEE97f92db0201d11CB8877C89738353bCE',
+    permitted: { token: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', amount: '13843000' },
+    spender: X402_EXACT_PERMIT2_PROXY,
+    nonce: PERMIT2_NONCE,
+    deadline: '1740672300',
+    witness: { to: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C', validAfter: '0' },
+  });
+  assert.equal(hex(permit2Digest(84532n, signed.permit2Authorization)), '8c7b70aca76ea907b24b5ff03336afca878a10678fa22a0e7dd16d750dd6e6a2');
+  assert.equal(signed.signature, '0xb35cf4bf54a5193e353efac8342e82316b0a1635762a170e2598a72c31b418b73006036ba766246bb97511ab1420be0c63a8d0ececdefa8e7d514c8bc8e3aae71c');
+  assert.equal(recoverPermit2Signer(PERMIT2_REQUIREMENT, signed), '0xae3DfFEE97f92db0201d11CB8877C89738353bCE');
+});
+
+test('x402 Permit2: the simulated facilitator refuses each kind of bad authorisation with the reference error', async () => {
+  const now = 1800000000;
+  const requirement = evmRequirement({ token: { asset: '0x00000000000000000000000000000000000Ab1e5', transferMethod: 'permit2' }, network: 'eip155:84532', amount: '22860000', payTo: addressFromPrivateKey(99n), maxTimeoutSeconds: 300 });
+  // Signs any authorisation, so the checks after the signature can be reached
+  const resign = (a) => {
+    const { r, s, recid } = sign(permit2Digest(84532n, a), 42n);
+    return { signature: `0x${Buffer.concat([bigIntToBytes(r), bigIntToBytes(s), Buffer.from([27 + recid])]).toString('hex')}`, permit2Authorization: a };
+  };
+  const good = signPermit2Authorization({ privateKey: 42n, requirement, now });
+  const facilitator = simulatedEvmFacilitator({ claim: memoryStore().claim, now: () => now });
+  const verify = (payload) => facilitator.verify({ x402Version: 2, accepted: requirement, payload }, requirement);
+  assert.deepEqual(await verify(good), { isValid: true, payer: addressFromPrivateKey(42n) });
+  const changed = (patch) => resign({ ...structuredClone(good.permit2Authorization), ...patch(structuredClone(good.permit2Authorization)) });
+  const cases = [
+    [{ ...good, permit2Authorization: { ...good.permit2Authorization, deadline: String(now + 1000) } }, 'invalid_permit2_signature'],
+    [changed(() => ({ spender: addressFromPrivateKey(7n) })), 'invalid_permit2_spender'],
+    [changed((a) => ({ witness: { ...a.witness, to: addressFromPrivateKey(7n) } })), 'invalid_permit2_recipient_mismatch'],
+    [changed((a) => ({ permitted: { ...a.permitted, token: addressFromPrivateKey(7n) } })), 'permit2_token_mismatch'],
+    [changed((a) => ({ permitted: { ...a.permitted, amount: '22859999' } })), 'permit2_amount_mismatch'],
+    [changed(() => ({ deadline: String(now - 1) })), 'permit2_deadline_expired'],
+    [changed((a) => ({ witness: { ...a.witness, validAfter: String(now + 60) } })), 'permit2_not_yet_valid'],
+    [{ ...good, permit2Authorization: { ...good.permit2Authorization, deadline: 'soon' } }, 'invalid_payload'],
+  ];
+  for (const [payload, reason] of cases) assert.equal((await verify(payload)).invalidReason, reason, reason);
+  const settle = (payload) => facilitator.settle({ x402Version: 2, accepted: requirement, payload }, requirement);
+  assert.equal((await settle(good)).success, true);
+  assert.equal((await settle(good)).errorReason, 'duplicate_settlement');
+});
+
 // --- Quotes and state ---
 
 test('quotes round up in the business’s favour, and format plainly', () => {
@@ -177,6 +233,10 @@ test('quotes round up in the business’s favour, and format plainly', () => {
   assert.equal(formatSats(13625000n), '13,625 sats');
   assert.equal(formatUsdc(8128000n), '8.128 USDC');
   assert.equal(formatUsdc(22860000n), '22.86 USDC');
+  assert.equal(penceToTokenUnits(1800, '1.27'), 22860000n);
+  assert.equal(penceToTokenUnits(1800, '1.27', 18), 22860000000000000000n);
+  assert.equal(formatToken(22860000000000000000n, 'USDT', 18), '22.86 USDT');
+  assert.equal(formatToken(8128000n, 'USDT'), '8.128 USDT');
   assert.throws(() => penceToMsat(1, 'lots'), /positive number/);
 });
 

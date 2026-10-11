@@ -10,7 +10,7 @@ import { createPayments } from '../src/payments/runtime.js';
 import { memoryStore } from '../src/payments/store.js';
 import { payOrderTool } from '../src/payments/tool.js';
 import { decodeInvoice } from '../src/payments/bolt11.js';
-import { MCP_PAYMENT_KEY, MCP_PAYMENT_RESPONSE_KEY, isLnbtc, signTransferAuthorization } from '../src/payments/x402.js';
+import { MCP_PAYMENT_KEY, MCP_PAYMENT_RESPONSE_KEY, X402_EXACT_PERMIT2_PROXY, isLnbtc, signPermit2Authorization, signTransferAuthorization } from '../src/payments/x402.js';
 import { generateOutputs } from '../src/lib/outputs.js';
 import { checkProject } from '../src/lib/check.js';
 import { demoPayments } from '../src/commands/payments.js';
@@ -72,8 +72,8 @@ test('a confirmed order gets an x402 payment request bound to it', async () => {
   const required = challenge.structuredContent;
   assert.equal(required.x402Version, 2);
   assert.equal(JSON.parse(challenge.content[0].text).x402Version, 2);
-  assert.match(required.resource.description, /Total £6\.40\. At Hollow Lane Farm Shop\. 8,000 sats or 8\.128 USDC/);
-  const [ln, usdc] = required.accepts;
+  assert.match(required.resource.description, /Total £6\.40\. At Hollow Lane Farm Shop\. 8,000 sats, 8\.128 USDC or 8\.128 USDT at today's rates\./);
+  const [ln, usdc, usdt] = required.accepts;
   assert.ok(isLnbtc(ln.network));
   assert.equal(ln.amount, '8000000');
   assert.equal(ln.payTo, payments.lightning.payTo);
@@ -85,6 +85,13 @@ test('a confirmed order gets an x402 payment request bound to it', async () => {
   assert.equal(usdc.network, 'eip155:84532');
   assert.equal(usdc.amount, '8128000');
   assert.equal(usdc.payTo, payments.usdc.payTo);
+  assert.deepEqual(usdc.extra, { assetTransferMethod: 'eip3009', name: 'USDC', version: '2' });
+  // USDT has no EIP-3009, so it is offered through Permit2
+  assert.equal(usdt.network, 'eip155:84532');
+  assert.equal(usdt.asset, payments.usdt.token.asset);
+  assert.equal(usdt.amount, '8128000');
+  assert.equal(usdt.payTo, payments.usdt.payTo);
+  assert.deepEqual(usdt.extra, { assetTransferMethod: 'permit2' });
 });
 
 test('paying by Lightning records the order, once', async () => {
@@ -130,6 +137,70 @@ test('paying with USDC goes through the facilitator; the payer can’t change th
   assert.match(store.orders[0].payment.transaction, /^0x[0-9a-f]{64}$/);
 });
 
+test('paying with USDT goes through Permit2, straight to the business', async () => {
+  const { call, store, payments } = await setup();
+  const first = await call(EGGS);
+  const confirmed = { ...ACCEPT, requestState: first.requestState };
+  const required = (await call(EGGS, confirmed)).structuredContent;
+  const usdt = required.accepts.find((a) => a.asset === payments.usdt.token.asset);
+  const now = Math.floor(Date.now() / 1000);
+  const pay = (payload, accepted = usdt) => call(EGGS, { ...confirmed, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, resource: required.resource, accepted, payload } } });
+
+  // Signed for someone else, or tampered with after signing: refused, and nothing is taken
+  const elsewhere = signPermit2Authorization({ privateKey: 5n, requirement: { ...usdt, payTo: '0x000000000000000000000000000000000000bEEF' }, now });
+  assert.match((await pay(elsewhere)).structuredContent.error, /invalid_permit2_recipient_mismatch/);
+  const tampered = signPermit2Authorization({ privateKey: 5n, requirement: usdt, now });
+  tampered.permit2Authorization.permitted.amount = '1';
+  assert.match((await pay(tampered)).structuredContent.error, /invalid_permit2_signature/);
+  assert.equal(store.orders.length, 0);
+
+  const payload = signPermit2Authorization({ privateKey: 5n, requirement: usdt, now });
+  assert.equal(payload.permit2Authorization.spender, X402_EXACT_PERMIT2_PROXY);
+  const done = await pay(payload);
+  assert.equal(done.structuredContent.status, 'paid');
+  assert.match(done.content[0].text, /^Paid 8\.128 USDT \(simulated test payment: no money moved\)\. Order ord_/);
+  assert.equal(store.orders[0].payment.rail, 'usdt');
+  assert.equal(store.orders[0].payment.symbol, 'USDT');
+  assert.equal(store.orders[0].payment.payer, '0xe1AB8145F7E55DC933d51a18c793F901A3A0b276');
+
+  const again = await pay(payload);
+  assert.match(again.content[0].text, /already been paid, so nothing more was taken/);
+  assert.equal(store.orders.length, 1);
+});
+
+test('one confirmation pays for one order, whichever rail is used', async () => {
+  // Lightning first: a second payment by USDC is refused before anything settles
+  let { call, payments, store } = await setup();
+  let first = await call(EGGS);
+  let confirmed = { ...ACCEPT, requestState: first.requestState };
+  let required = (await call(EGGS, confirmed)).structuredContent;
+  assert.equal((await call(EGGS, confirmed)).resultType, 'input_required', 'a second payment request needs the customer again');
+  const ln = required.accepts.find((a) => isLnbtc(a.network));
+  const { preimage } = await payments.lightning.node.pay(ln.extra.invoice);
+  const paidLn = await call(EGGS, { ...confirmed, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, accepted: ln, payload: { preimage } } } });
+  assert.equal(paidLn.structuredContent.status, 'paid');
+  const usdc = required.accepts.find((a) => a.network === 'eip155:84532' && a.extra.assetTransferMethod === 'eip3009');
+  const now = Math.floor(Date.now() / 1000);
+  const secondCoin = await call(EGGS, { ...confirmed, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, accepted: usdc, payload: signTransferAuthorization({ privateKey: 5n, requirement: usdc, now }) } } });
+  assert.match(secondCoin.content[0].text, /already been paid, so nothing more was taken/);
+  assert.equal(store.orders.length, 1);
+
+  // A stablecoin first: Lightning money has already moved, so it is recorded for a refund
+  ({ call, payments, store } = await setup());
+  first = await call(EGGS);
+  confirmed = { ...ACCEPT, requestState: first.requestState };
+  required = (await call(EGGS, confirmed)).structuredContent;
+  const usdt = required.accepts.find((a) => a.extra.assetTransferMethod === 'permit2');
+  const paidUsdt = await call(EGGS, { ...confirmed, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, accepted: usdt, payload: signPermit2Authorization({ privateKey: 5n, requirement: usdt, now }) } } });
+  assert.equal(paidUsdt.structuredContent.status, 'paid');
+  const ln2 = required.accepts.find((a) => isLnbtc(a.network));
+  const { preimage: p2 } = await payments.lightning.node.pay(ln2.extra.invoice);
+  const late = await call(EGGS, { ...confirmed, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, accepted: ln2, payload: { preimage: p2 } } } });
+  assert.equal(late.isError, true);
+  assert.match(late.content[0].text, /still reached Hollow Lane Farm Shop, which should refund it/);
+  assert.deepEqual(store.orders.map((o) => [o.payment.rail, o.status]), [['usdt', 'paid'], ['lightning', 'duplicate_payment']]);
+});
+
 test('pay_order refuses what it can’t do safely', async () => {
   const { call } = await setup();
   const legacyMeta = {};
@@ -143,8 +214,10 @@ test('the business publishes its payees, so agents can check who they pay', asyn
   const files = generateOutputs(project, '0.1.0', { payees: payments.payees });
   const [entry] = JSON.parse(files.get('ard.json')).entries;
   assert.ok(entry.capabilities.includes('pay_order'));
-  assert.deepEqual(entry.metadata.payments.map((p) => p.rail), ['lightning', 'usdc']);
-  assert.equal(JSON.parse(files.get('business.jsonld')).paymentAccepted, 'Lightning (bitcoin), USDC');
+  assert.deepEqual(entry.metadata.payments.map((p) => p.rail), ['lightning', 'usdc', 'usdt']);
+  assert.deepEqual(entry.metadata.payments[2], { rail: 'usdt', network: 'eip155:84532', asset: payments.usdt.token.asset, symbol: 'USDT', decimals: 6, payTo: payments.usdt.payTo });
+  assert.equal(JSON.parse(files.get('business.jsonld')).paymentAccepted, 'Lightning (bitcoin), USDC, USDT');
+  assert.match(files.get('SKILL.md'), /takes payment by Lightning, USDC or USDT/);
 });
 
 test('the Gentified test runs the payment flow against simulated rails', async () => {
@@ -152,7 +225,8 @@ test('the Gentified test runs the payment flow against simulated rails', async (
   const results = await checkProject(project, { toolkitVersion: '0.1.0', now: new Date('2026-10-12T09:00:00Z') });
   const pay = results.filter((r) => r.group === 'Payments (prototype)');
   assert.deepEqual(pay.filter((r) => r.level === 'fail'), []);
-  assert.equal(pay.filter((r) => r.level === 'pass').length, 8);
+  assert.equal(pay.filter((r) => r.level === 'pass').length, 12);
+  assert.ok(pay.some((r) => /A USDT payment through Permit2 is checked and recorded/.test(r.text)));
   const broken = demoProject({ payments: { lightning: { network: 'mainnet', node: 'simulated' } } });
   const bad = await checkProject(broken, { toolkitVersion: '0.1.0' });
   assert.match(bad.filter((r) => r.level === 'fail').map((r) => r.text).join('\n'), /payments\.rates\.BTC/);
@@ -187,11 +261,14 @@ test('end to end over HTTP: the demo agent confirms, checks and pays', async () 
       assert.equal(paid.code, 0, paid.out);
       assert.match(paid.out, /✓ the invoice is bound to exactly this order/);
       assert.match(paid.out, /✓ Paid 22,500 sats by Lightning/);
+      const usdt = await run('y\n', ['--rail', 'usdt']);
+      assert.equal(usdt.code, 0, usdt.out);
+      assert.match(usdt.out, /Signing a Permit2 payment of 22\.86 USDT to 0x/);
+      assert.match(usdt.out, /✓ Paid 22\.86 USDT \(simulated test payment: no money moved\)/);
       const declined = await run('n\n', []);
       assert.match(declined.out, /The customer declined\. Nothing was ordered or paid\./);
       const orders = (await readFile(join(dir, '.gentifi', 'orders.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
-      assert.equal(orders.length, 1);
-      assert.equal(orders[0].total.formatted, '£18.00');
+      assert.deepEqual(orders.map((o) => [o.payment.rail, o.total.formatted]), [['lightning', '£18.00'], ['usdt', '£18.00']]);
       assert.match(await readFile(join(dir, '.gentifi', '.gitignore'), 'utf8'), /^\*$/m);
     } finally {
       server.kill();
@@ -215,5 +292,6 @@ test('gentifi payments --demo sets up simulated rails; plain gentifi payments ex
     assert.equal(await main(['payments', '--project', file], io), 0);
     assert.match(io.stdout, /£10\.00 is 12,500 sats/);
     assert.match(io.stdout, /£10\.00 is 12\.70 USDC/);
+    assert.match(io.stdout, /£10\.00 is 12\.70 USDT/);
   });
 });

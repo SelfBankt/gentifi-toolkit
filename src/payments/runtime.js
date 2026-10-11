@@ -3,7 +3,7 @@ import { mcpUrl } from '../lib/project.js';
 import { lndNode, simulatedNode } from './lightning.js';
 import { parseRate } from './quote.js';
 import { fileStore } from './store.js';
-import { LNBTC, USDC, remoteFacilitator, simulatedEvmFacilitator } from './x402.js';
+import { LNBTC, USDC, checksumAddress, remoteFacilitator, simulatedEvmFacilitator } from './x402.js';
 
 /**
  * Turns the `payments` block of gentifi.json into working rails. Example:
@@ -11,22 +11,31 @@ import { LNBTC, USDC, remoteFacilitator, simulatedEvmFacilitator } from './x402.
  *   "payments": {
  *     "rates": { "BTC": "80000", "USD": "1.27" },
  *     "lightning": { "network": "testnet", "node": "simulated" },
- *     "usdc": { "network": "eip155:84532", "payTo": "0x…", "facilitator": "simulated" }
+ *     "usdc": { "network": "eip155:84532", "payTo": "0x…", "facilitator": "simulated" },
+ *     "usdt": { "network": "eip155:84532", "asset": "0x…", "payTo": "0x…", "facilitator": "simulated" }
  *   }
+ *
+ * USDT has no EIP-3009, so it is paid with Permit2 ("transferMethod": "permit2",
+ * the default). There's no official USDT on test networks, so "asset" names a
+ * test token standing in for it.
  *
  * A real Lightning node: "node": { "type": "lnd", "url": "https://127.0.0.1:8080",
  * "macaroonEnv": "GENTIFI_LND_MACAROON", "tlsCert": "/path/to/tls.cert" } with "payTo"
  * set to the node's public key. Secrets stay in environment variables.
  */
 
-export const DEFAULT_TIMEOUTS = { lightning: 600, usdc: 300 };
+export const DEFAULT_TIMEOUTS = { lightning: 600, usdc: 300, usdt: 300 };
+
+/** EVM test networks the prototype accepts for USDT. */
+export const EVM_TEST_NETWORKS = { 'eip155:84532': 'Base Sepolia', 'eip155:11155111': 'Ethereum Sepolia', 'eip155:421614': 'Arbitrum Sepolia' };
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 /** Problems with a payments block, as plain sentences (empty when it's usable). */
 export function paymentProblems(payments) {
   const p = [];
   if (!payments || typeof payments !== 'object') return ['payments must be an object'];
-  const { lightning, usdc, rates = {} } = payments;
-  if (!lightning && !usdc) p.push('payments needs a lightning or usdc rail');
+  const { lightning, usdc, usdt, rates = {} } = payments;
+  if (!lightning && !usdc && !usdt) p.push('payments needs a lightning, usdc or usdt rail');
   if (lightning) {
     if (!LNBTC[lightning.network]) p.push(`payments.lightning.network must be one of: ${Object.keys(LNBTC).join(', ')}`);
     try { parseRate(rates.BTC, 'BTC'); } catch (e) { p.push(e.message); }
@@ -42,6 +51,18 @@ export function paymentProblems(payments) {
     if (!USDC[usdc.network]) p.push(`payments.usdc.network must be one of: ${Object.keys(USDC).join(', ')} (test networks only in this prototype)`);
     if (!/^0x[0-9a-fA-F]{40}$/.test(usdc.payTo ?? '')) p.push('payments.usdc.payTo must be the business\'s own address (0x followed by 40 hex characters)');
     if (usdc.facilitator !== 'simulated' && !/^https:\/\//.test(usdc.facilitator ?? '')) p.push('payments.usdc.facilitator must be "simulated" or an https facilitator URL');
+  }
+  if (usdt) {
+    if (!EVM_TEST_NETWORKS[usdt.network]) p.push(`payments.usdt.network must be one of: ${Object.keys(EVM_TEST_NETWORKS).join(', ')} (test networks only in this prototype)`);
+    if (!ADDRESS.test(usdt.asset ?? '')) p.push('payments.usdt.asset must be the token\'s contract address on that network. There is no official USDT on test networks, so use a test token');
+    if (!ADDRESS.test(usdt.payTo ?? '')) p.push('payments.usdt.payTo must be the business\'s own address (0x followed by 40 hex characters)');
+    if (usdt.facilitator !== 'simulated' && !/^https:\/\//.test(usdt.facilitator ?? '')) p.push('payments.usdt.facilitator must be "simulated" or an https facilitator URL');
+    const method = usdt.transferMethod ?? 'permit2';
+    if (!['permit2', 'eip3009'].includes(method)) p.push('payments.usdt.transferMethod must be "permit2" (USDT) or "eip3009" (only for USDT0 deployments that support it)');
+    if (method === 'eip3009' && !(usdt.name && usdt.version)) p.push('payments.usdt.name and payments.usdt.version (the token\'s EIP-712 domain) are needed for "eip3009"');
+    if (usdt.decimals !== undefined && !(Number.isInteger(usdt.decimals) && usdt.decimals >= 0 && usdt.decimals <= 36)) p.push('payments.usdt.decimals must be a whole number (USDT uses 6)');
+  }
+  if (usdc || usdt) {
     try { parseRate(rates.USD, 'USD'); } catch (e) { p.push(e.message); }
   }
   return p;
@@ -75,30 +96,43 @@ export async function createPayments(project, { projectDir = '.', store, simulat
     lightning = { node, network: node.network, payTo: node.payTo, maxTimeoutSeconds, simulated: node.simulated };
   }
 
-  let usdc = null;
-  if (config.usdc) {
-    const { network, payTo, facilitator: url, maxTimeoutSeconds = DEFAULT_TIMEOUTS.usdc } = config.usdc;
+  // Dollar stablecoins on EVM chains, settled by a facilitator straight to the business's address
+  const coin = (rail, token) => {
+    const { network, payTo, facilitator: url, maxTimeoutSeconds = DEFAULT_TIMEOUTS[rail] } = config[rail];
     const facilitator = simulate || url === 'simulated' ? simulatedEvmFacilitator({ claim: st.claim, now }) : remoteFacilitator(url);
-    usdc = { network, payTo, facilitator, maxTimeoutSeconds, token: USDC[network], simulated: facilitator.simulated };
-  }
+    return { rail, symbol: token.symbol, network, payTo, facilitator, maxTimeoutSeconds, token, simulated: facilitator.simulated };
+  };
+  const usdc = config.usdc ? coin('usdc', USDC[config.usdc.network]) : null;
+  const usdt = config.usdt ? coin('usdt', {
+    asset: checksumAddress(config.usdt.asset),
+    transferMethod: config.usdt.transferMethod ?? 'permit2',
+    name: config.usdt.name,
+    version: config.usdt.version,
+    decimals: config.usdt.decimals ?? 6,
+    symbol: 'USDT',
+    label: `USDT test token on ${EVM_TEST_NETWORKS[config.usdt.network]} (test network)`,
+  }) : null;
+  const coins = [usdc, usdt].filter(Boolean);
 
   return {
     lightning,
     usdc,
+    usdt,
+    coins,
     rates: config.rates ?? {},
     store: st,
     secret,
     server: mcpUrl(project),
     orderWebhook: config.orderWebhook,
     now,
-    payees: payeesOf({ lightning, usdc }),
+    payees: payeesOf({ lightning, coins }),
   };
 }
 
 /** What the business publishes so agents can check a payment request pays the right party. */
-export function payeesOf({ lightning, usdc }) {
+export function payeesOf({ lightning, coins = [] }) {
   return [
     ...(lightning ? [{ rail: 'lightning', network: lightning.network, asset: 'BTC', payTo: lightning.payTo }] : []),
-    ...(usdc ? [{ rail: 'usdc', network: usdc.network, asset: usdc.token.asset, payTo: usdc.payTo }] : []),
+    ...coins.map((c) => ({ rail: c.rail, network: c.network, asset: c.token.asset, symbol: c.symbol, decimals: c.token.decimals, payTo: c.payTo })),
   ];
 }

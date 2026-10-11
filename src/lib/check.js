@@ -5,11 +5,12 @@ import { validateArdManifest, validateServerCard, validateSkill } from './valida
 import { createProtocol, META, MODERN_VERSIONS, LEGACY_VERSIONS } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
 import { McpHttpClient } from '../mcp/client.js';
-import { createPayments, paymentProblems } from '../payments/runtime.js';
+import { EVM_TEST_NETWORKS, createPayments, paymentProblems } from '../payments/runtime.js';
+import { randomPrivateKey } from '../payments/lightning.js';
 import { memoryStore } from '../payments/store.js';
 import { payOrderTool } from '../payments/tool.js';
 import { decodeInvoice } from '../payments/bolt11.js';
-import { MCP_PAYMENT_KEY, isLnbtc, mcpRequestHash } from '../payments/x402.js';
+import { MCP_PAYMENT_KEY, isLnbtc, mcpRequestHash, signEvmPayment, transferMethodOf } from '../payments/x402.js';
 
 /**
  * The Gentified test: can agents find the business, read its prices, and
@@ -177,7 +178,8 @@ async function agentChecks(project, toolkitVersion) {
 /**
  * Runs pay_order end to end against simulated rails (never a real node or
  * facilitator): the customer must be asked first, confirmations can't be
- * forged, requests pay the published payee, and a payment can't be reused.
+ * forged, requests pay the published payee, one confirmation pays for one
+ * order, and a payment can't be reused.
  */
 async function paymentChecks(project, toolkitVersion) {
   const problems = paymentProblems(project.payments);
@@ -186,6 +188,10 @@ async function paymentChecks(project, toolkitVersion) {
   const cfg = project.payments;
   if (cfg.lightning) r.push({ level: cfg.lightning.network === 'mainnet' && cfg.lightning.node !== 'simulated' ? 'warn' : 'info', text: cfg.lightning.node === 'simulated' ? 'Lightning: simulated node, no real money' : `Lightning: LND on ${cfg.lightning.network}${cfg.lightning.network === 'mainnet' ? '. Real money: this is a prototype' : ''}` });
   if (cfg.usdc) r.push({ level: 'info', text: cfg.usdc.facilitator === 'simulated' ? 'USDC: Base Sepolia terms with simulated settlement, no real money' : 'USDC: Base Sepolia, settled by the configured facilitator' });
+  if (cfg.usdt) {
+    const method = (cfg.usdt.transferMethod ?? 'permit2') === 'permit2' ? 'Permit2' : 'EIP-3009';
+    r.push({ level: 'info', text: `USDT: ${method} terms for a test token on ${EVM_TEST_NETWORKS[cfg.usdt.network]}, ${cfg.usdt.facilitator === 'simulated' ? 'simulated settlement, no real money' : 'settled by the configured facilitator'}` });
+  }
 
   const payments = await createPayments(project, { store: memoryStore(), simulate: true });
   const tool = payOrderTool(project, payments);
@@ -229,27 +235,61 @@ async function paymentChecks(project, toolkitVersion) {
   const challenge = await call({ ...accept, requestState: first.requestState });
   const required = challenge.structuredContent;
   if (!challenge.isError || required?.x402Version !== 2) return [...r, { level: 'fail', text: 'A confirmed order should get an x402 payment request' }];
-  const published = new Map(payments.payees.map((p) => [p.network, p.payTo.toLowerCase()]));
+  const payeeKey = (network, asset) => `${network}|${String(asset).toLowerCase()}`;
+  const published = new Map(payments.payees.map((p) => [payeeKey(p.network, p.asset), p]));
   let bound = true;
   for (const req of required.accepts) {
-    if (published.get(req.network) !== req.payTo.toLowerCase()) bound = false;
+    if (published.get(payeeKey(req.network, req.asset))?.payTo.toLowerCase() !== req.payTo.toLowerCase()) bound = false;
     if (isLnbtc(req.network)) {
       const inv = decodeInvoice(req.extra.invoice);
       const expected = mcpRequestHash({ server: payments.server, name: 'pay_order', args });
       if (inv.descriptionHash !== expected || inv.payee !== req.payTo || inv.amountMsat !== BigInt(req.amount)) bound = false;
     }
   }
-  r.push(bound ? { level: 'pass', text: `Payment requests (${required.accepts.map((a) => (isLnbtc(a.network) ? 'Lightning' : 'USDC')).join(', ')}) are bound to the order and pay only the published payee` }
+  const labels = required.accepts.map((a) => (isLnbtc(a.network) ? 'Lightning' : published.get(payeeKey(a.network, a.asset))?.symbol ?? a.asset));
+  r.push(bound ? { level: 'pass', text: `Payment requests (${labels.join(', ')}) are bound to the order and pay only the published payee` }
     : { level: 'fail', text: 'A payment request is not bound to the order or pays someone other than the published payee' });
+
+  const secondRequest = await call({ ...accept, requestState: first.requestState });
+  r.push(secondRequest.resultType === 'input_required'
+    ? { level: 'pass', text: 'One confirmation gets one payment request; another needs the customer again' }
+    : { level: 'fail', text: 'One confirmation produced a second payment request' });
+
+  const paidWith = (requirement, payload, requestState) => call({
+    ...accept, requestState, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, resource: required.resource, accepted: requirement, payload } },
+  });
+  const coinPayload = (requirement) => signEvmPayment({ privateKey: randomPrivateKey(), requirement, now: payments.now() });
+  const failText = (res) => res.structuredContent?.error ?? res.content?.[0]?.text;
 
   const ln = required.accepts.find((a) => isLnbtc(a.network));
   if (ln) {
     const { preimage } = await payments.lightning.node.pay(ln.extra.invoice);
-    const pay = { ...accept, requestState: first.requestState, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, resource: required.resource, accepted: ln, payload: { preimage } } } };
-    const done = await call(pay);
-    const again = await call(pay);
-    r.push(done.structuredContent?.status === 'paid' ? { level: 'pass', text: 'A paid order is recorded for the business (simulated payment)' } : { level: 'fail', text: `A valid payment was not accepted: ${done.structuredContent?.error ?? done.content?.[0]?.text}` });
+    const done = await paidWith(ln, { preimage }, first.requestState);
+    const again = await paidWith(ln, { preimage }, first.requestState);
+    r.push(done.structuredContent?.status === 'paid' ? { level: 'pass', text: 'A paid order is recorded for the business (simulated payment)' } : { level: 'fail', text: `A valid payment was not accepted: ${failText(done)}` });
     r.push(again.isError && /duplicate_settlement/.test(again.structuredContent?.error ?? '') ? { level: 'pass', text: 'The same payment can’t be used twice' } : { level: 'fail', text: 'A payment was accepted twice' });
+    const coin = required.accepts.find((a) => !isLnbtc(a.network));
+    if (coin) {
+      const twice = await paidWith(coin, coinPayload(coin), first.requestState);
+      r.push(twice.isError && /already been paid/.test(failText(twice) ?? '')
+        ? { level: 'pass', text: 'One confirmation pays for one order: a second payment is refused before it settles' }
+        : { level: 'fail', text: 'One confirmation paid for two orders' });
+    }
+  }
+
+  for (const c of payments.coins) {
+    const ask = await call();
+    const fresh = (await call({ ...accept, requestState: ask.requestState })).structuredContent;
+    const requirement = fresh?.accepts?.find((a) => a.network === c.network && a.asset.toLowerCase() === c.token.asset.toLowerCase());
+    if (!requirement) {
+      r.push({ level: 'fail', text: `The payment request did not offer ${c.symbol}` });
+      continue;
+    }
+    const done = await paidWith(requirement, coinPayload(requirement), ask.requestState);
+    const how = transferMethodOf(requirement) === 'permit2' ? ' through Permit2' : '';
+    r.push(done.structuredContent?.status === 'paid'
+      ? { level: 'pass', text: `A ${c.symbol} payment${how} is checked and recorded (simulated settlement)` }
+      : { level: 'fail', text: `A valid ${c.symbol} payment was not accepted: ${failText(done)}` });
   }
   return r;
 }
