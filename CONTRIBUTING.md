@@ -20,13 +20,15 @@ Useful places to start:
 - **A catalogue source:** add an importer next to `src/lib/catalogue.js` that returns the same item shape, and wire it into `src/commands/init.js` (Shopify, WooCommerce and booking systems are wanted).
 - **A tool:** add it to `src/mcp/tools.js`. Every tool needs a title, an input schema and `readOnlyHint` or `destructiveHint`. Anything that changes state must end with the customer confirming it.
 - **A format:** add a generator to `src/lib/outputs.js` and a validator to `src/lib/validate.js`, so `gentifi check` can test it.
+- **A wallet or payment rail (prototype):** add an adapter next to `src/payments/lightning.js` or a facilitator in `src/payments/x402.js`. Test it against simulated rails in `gentifi check`, never a real node.
 
-`test/fixtures/qr-reference.json` holds QR matrices from an independent encoder; `test/qr.test.js` compares against them.
+`test/fixtures/qr-reference.json` holds QR matrices from an independent encoder; `test/qr.test.js` compares against them. `test/payments.test.js` checks the payment code against the published BOLT 11 and x402 test vectors.
 
 ## Ground rules
 
 - Generated files must never instruct an agent to install or connect anything silently. The customer approves every connection and every order.
-- Tools never place orders. They prepare them for the customer to confirm.
+- Tools never place an order the customer hasn't confirmed in their own app. `prepare_order` hands over to the business's own checkout. `pay_order` (prototype) asks first, and pays only the business's published payee.
+- Payment code never holds customer funds. Money goes straight from the customer's wallet to the business's own node or address.
 - Use fictional data in examples and tests.
 - Write in UK English (catalogue, colour, organisation).
 

@@ -98,7 +98,15 @@ gentifi check --url https://their-address
 
 The connector itself needs a server running `gentifi serve` (behind their web server, or any Node host). Without it, agents can still read the catalogue snapshot in `SKILL.md` and `business.jsonld`. Publishing to the Gentifi network isn't available yet.
 
-### 9. Keep it fresh
+### 9. Payments (prototype, only if the user asks)
+
+`pay_order` lets customers' agents pay by Lightning or USDC on test networks. Only set it up if the user asks.
+
+- `gentifi payments --demo` adds a fully simulated setup (no real money) for trying it.
+- For real test networks, the user needs their own Lightning node (an *invoice* macaroon in an environment variable) and/or a Base Sepolia address. Never put macaroons or private keys in `gentifi.json`. Never point it at mainnet.
+- `.gentifi/` holds used payments, the order log and a signing secret. It ignores itself in git; never force-add it.
+
+### 10. Keep it fresh
 
 When prices or stock change in the spreadsheet: `gentifi sync`, then `gentifi build` (or restart `gentifi serve`).
 

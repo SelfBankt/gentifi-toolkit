@@ -1,4 +1,5 @@
 import { ToolError, validateArgs } from './tools.js';
+import { InputRequired, ToolResult } from './results.js';
 
 /**
  * A dual-era MCP server core (transport independent).
@@ -57,7 +58,7 @@ export function createProtocol({ serverInfo, instructions, tools, log = () => {}
   const byName = new Map(tools.map((t) => [t.name, t]));
   const capabilities = { tools: { listChanged: false } };
 
-  async function callTool(params) {
+  async function callTool(params, era) {
     const tool = byName.get(params?.name);
     if (!tool) throw new RpcError(ERRORS.invalidParams, `Unknown tool: ${params?.name}`);
     const args = params.arguments ?? {};
@@ -65,9 +66,28 @@ export function createProtocol({ serverInfo, instructions, tools, log = () => {}
     if (problems.length) {
       return { content: [{ type: 'text', text: `Invalid arguments: ${problems.join('; ')}` }], isError: true };
     }
+    const meta = params._meta && typeof params._meta === 'object' ? params._meta : {};
+    const context = {
+      era,
+      meta,
+      clientCapabilities: meta[META.clientCapabilities] ?? {},
+      inputResponses: params.inputResponses,
+      requestState: params.requestState,
+    };
     try {
-      const structured = await tool.handler(args);
-      return { content: [{ type: 'text', text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
+      const out = await tool.handler(args, context);
+      if (out instanceof InputRequired) {
+        if (era !== 'modern') {
+          return { content: [{ type: 'text', text: 'This step needs the customer to confirm in their app, which this connection cannot show.' }], isError: true };
+        }
+        return {
+          resultType: 'input_required',
+          ...(out.inputRequests ? { inputRequests: out.inputRequests } : {}),
+          ...(out.requestState ? { requestState: out.requestState } : {}),
+        };
+      }
+      if (out instanceof ToolResult) return out.result;
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
     } catch (e) {
       if (e instanceof ToolError) return { content: [{ type: 'text', text: e.message }], isError: true };
       throw e;
@@ -87,7 +107,7 @@ export function createProtocol({ serverInfo, instructions, tools, log = () => {}
       case 'tools/list':
         return { tools: definitions, ttlMs: LIST_TTL_MS, cacheScope: 'public' };
       case 'tools/call':
-        return callTool(params);
+        return callTool(params, 'modern');
       default:
         throw new RpcError(ERRORS.methodNotFound, `Method not found: ${method}`);
     }
@@ -109,7 +129,7 @@ export function createProtocol({ serverInfo, instructions, tools, log = () => {}
       case 'tools/list':
         return { tools: definitions };
       case 'tools/call':
-        return callTool(params);
+        return callTool(params, 'legacy');
       default:
         throw new RpcError(ERRORS.methodNotFound, `Method not found: ${method}`);
     }

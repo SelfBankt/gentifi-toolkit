@@ -50,11 +50,15 @@ function readBody(req) {
   });
 }
 
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
 /**
  * Serves the MCP endpoint (POST), the server card and the generated files.
- * @param {{ protocol: object, files?: Map<string, string>, mcpPath?: string, allowedOrigins?: string[], log?: (s: string) => void }} options
+ * `devRoutes` are extra JSON POST routes for development, answered only for
+ * requests from this machine.
+ * @param {{ protocol: object, files?: Map<string, string>, mcpPath?: string, allowedOrigins?: string[], devRoutes?: Record<string, (body: object) => Promise<object>>, log?: (s: string) => void }} options
  */
-export function createHttpHandler({ protocol, files = new Map(), mcpPath = '/mcp', allowedOrigins = [], log = () => {} }) {
+export function createHttpHandler({ protocol, files = new Map(), mcpPath = '/mcp', allowedOrigins = [], devRoutes = {}, log = () => {} }) {
   const allowed = new Set(allowedOrigins.map((o) => new URL(o).origin));
 
   function originAllowed(origin, host) {
@@ -143,6 +147,21 @@ export function createHttpHandler({ protocol, files = new Map(), mcpPath = '/mcp
       if (path === mcpPath) {
         if (req.method === 'POST') return await handleMcp(req, res, cors);
         return send(res, 405, '', { ...cors, allow: 'POST, OPTIONS' });
+      }
+
+      if (req.method === 'POST' && devRoutes[path]) {
+        if (!LOOPBACK.has(req.socket.remoteAddress)) return send(res, 403, { error: 'Development routes only answer this machine' });
+        let body;
+        try {
+          body = JSON.parse((await readBody(req)) || '{}');
+        } catch {
+          return send(res, 400, { error: 'Body must be JSON' });
+        }
+        try {
+          return send(res, 200, await devRoutes[path](body), cors);
+        } catch (e) {
+          return send(res, 400, { error: e.message }, cors);
+        }
       }
 
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '', { allow: 'GET, HEAD' });

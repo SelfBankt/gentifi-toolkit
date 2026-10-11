@@ -33,8 +33,14 @@ async function readJsonRpc(res, id) {
 }
 
 export class McpHttpClient {
-  constructor(url, { fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+  /**
+   * @param {string} url MCP endpoint
+   * @param {{ fetchImpl?: Function, timeoutMs?: number, capabilities?: object }} [options]
+   *   capabilities: client capabilities declared on every modern request, e.g. { elicitation: { form: {} } }
+   */
+  constructor(url, { fetchImpl = globalThis.fetch, timeoutMs = 10000, capabilities = {} } = {}) {
     this.url = url;
+    this.capabilities = capabilities;
     this.fetch = fetchImpl;
     this.timeoutMs = timeoutMs;
     this.era = null;
@@ -67,7 +73,7 @@ export class McpHttpClient {
       method,
       params: {
         ...params,
-        _meta: { [META.protocolVersion]: version, [META.clientInfo]: CLIENT_INFO, [META.clientCapabilities]: {} },
+        _meta: { ...params._meta, [META.protocolVersion]: version, [META.clientInfo]: CLIENT_INFO, [META.clientCapabilities]: this.capabilities },
       },
     };
     const headers = { 'mcp-protocol-version': version, 'mcp-method': method };

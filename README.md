@@ -51,6 +51,7 @@ gentifi serve                   # run the MCP connector (HTTP, or --stdio)
 gentifi publish --self-host <dir>   # lay out the files for your own web server
 gentifi check --url <link>      # test a published business, the way an agent would
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
+gentifi payments [--demo]       # agent payments by Lightning or USDC (prototype)
 ```
 
 Run `gentifi <command> --help` for every option. Business details come from flags (`--name`, `--kind`, `--area`, `--hours`, `--email`, `--phone`, `--website`, `--checkout-url`, `--booking-url`, `--base-url`); the toolkit never guesses them, and `check` tells you what's missing.
@@ -89,6 +90,39 @@ Rows without a name or a usable price are skipped and reported, never guessed. F
 
 A UCP profile is planned for businesses with an online checkout that implements UCP; the toolkit won't publish one that points at nothing.
 
+## Payments through the agent (prototype)
+
+`pay_order` lets a customer's agent pay for an order by **Lightning** or **USDC**, using [x402](https://github.com/x402-foundation/x402) over MCP. It runs on test networks, or fully simulated.
+
+```bash
+gentifi payments --demo     # simulated Lightning node and USDC settlement: no real money
+gentifi serve
+node examples/agent-pay.mjs --item EGG-12:2 --collect Saturday    # in this repository
+```
+
+How it stays safe:
+
+1. **The customer confirms first, in their own app.** `pay_order` answers with an MCP 2026-07-28 confirmation request (an elicitation). Only a confirmed retry, carrying signed request state, gets a payment request. Apps that can't show confirmations get none.
+2. **Every payment request is bound to its order.** The Lightning invoice's description hash commits to the exact tool call (x402 `exact` on `lnbtc`, profile `mcp:1`), so a proof can't buy anything else. USDC terms must be echoed unchanged.
+3. **Agents can check who they pay.** The ARD manifest publishes the business's Lightning key and USDC address; `examples/agent-pay.mjs` refuses any request that pays someone else.
+4. **The toolkit never holds money.** Lightning invoices come from the business's own node; USDC goes from the payer straight to the business's address through a facilitator.
+5. **Single use.** Each Lightning payment hash and USDC authorisation can settle once. The record of used payments, the order log and a signing secret live in `.gentifi/`, which ignores itself in git.
+
+Real test networks:
+
+```json
+"payments": {
+  "rates": { "BTC": "80000", "USD": "1.27" },
+  "lightning": { "network": "testnet", "payTo": "<your node's public key>",
+                 "node": { "type": "lnd", "url": "https://127.0.0.1:8080", "macaroonEnv": "GENTIFI_LND_MACAROON", "tlsCert": "/path/to/tls.cert" } },
+  "usdc": { "network": "eip155:84532", "payTo": "0x<your address>", "facilitator": "https://x402.org/facilitator" }
+}
+```
+
+`GENTIFI_LND_MACAROON` holds an *invoice* macaroon (hex): it can create invoices but not spend. Rates are set by hand in this prototype. `gentifi check` runs the whole payment flow against simulated rails, so it never touches a real node.
+
+Not yet: Nostr Wallet Connect and other wallets, refunds (Lightning `exact` payments are final), live exchange rates, sterling stablecoins, and mainnet USDC.
+
 ## Design rules
 
 - **The customer always approves.** Every tool is read-only. Connecting an agent to a business, and every order, is confirmed by the customer in their own app or on the business's own checkout.
@@ -124,9 +158,10 @@ npm test
 SKILL.md                Agent Skill for coding agents
 bin/gentifi.js          CLI entry point
 src/cli.js              argument parsing and command dispatch
-src/commands/           init, sync, build, check, serve, publish, collection
+src/commands/           init, sync, build, check, serve, publish, payments, collection
 src/lib/                catalogue import, outputs, checks, QR codes, Business Collections
 src/mcp/                MCP tools, protocol (both eras), HTTP and stdio transports, client
+src/payments/           pay_order, x402 (Lightning and USDC), BOLT 11, secp256k1, keccak
 examples/               fictional sample catalogues
 test/                   node:test suite
 ```

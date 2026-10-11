@@ -5,6 +5,11 @@ import { validateArdManifest, validateServerCard, validateSkill } from './valida
 import { createProtocol, META, MODERN_VERSIONS, LEGACY_VERSIONS } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
 import { McpHttpClient } from '../mcp/client.js';
+import { createPayments, paymentProblems } from '../payments/runtime.js';
+import { memoryStore } from '../payments/store.js';
+import { payOrderTool } from '../payments/tool.js';
+import { decodeInvoice } from '../payments/bolt11.js';
+import { MCP_PAYMENT_KEY, isLnbtc, mcpRequestHash } from '../payments/x402.js';
 
 /**
  * The Gentified test: can agents find the business, read its prices, and
@@ -169,6 +174,88 @@ async function agentChecks(project, toolkitVersion) {
   return r;
 }
 
+/**
+ * Runs pay_order end to end against simulated rails (never a real node or
+ * facilitator): the customer must be asked first, confirmations can't be
+ * forged, requests pay the published payee, and a payment can't be reused.
+ */
+async function paymentChecks(project, toolkitVersion) {
+  const problems = paymentProblems(project.payments);
+  if (problems.length) return problems.map((text) => ({ level: 'fail', text }));
+  const r = [];
+  const cfg = project.payments;
+  if (cfg.lightning) r.push({ level: cfg.lightning.network === 'mainnet' && cfg.lightning.node !== 'simulated' ? 'warn' : 'info', text: cfg.lightning.node === 'simulated' ? 'Lightning: simulated node, no real money' : `Lightning: LND on ${cfg.lightning.network}${cfg.lightning.network === 'mainnet' ? '. Real money: this is a prototype' : ''}` });
+  if (cfg.usdc) r.push({ level: 'info', text: cfg.usdc.facilitator === 'simulated' ? 'USDC: Base Sepolia terms with simulated settlement, no real money' : 'USDC: Base Sepolia, settled by the configured facilitator' });
+
+  const payments = await createPayments(project, { store: memoryStore(), simulate: true });
+  const tool = payOrderTool(project, payments);
+  const protocol = createProtocol({ serverInfo: serverInfo(project, toolkitVersion), tools: [...businessTools(project), tool] });
+  const item = project.catalogue.items.find((i) => i.price != null && inStockOrUnknown(i));
+  if (!item) return [...r, { level: 'warn', text: 'No priced item in stock to test pay_order with' }];
+  const args = { items: [{ sku: item.sku, quantity: 1 }] };
+  const withElicitation = { [META.protocolVersion]: MODERN_VERSIONS[0], [META.clientCapabilities]: { elicitation: { form: {} } } };
+  let id = 1;
+  const call = async (extra = {}, meta = withElicitation) => (await protocol.handle({
+    jsonrpc: '2.0', id: id++, method: 'tools/call',
+    params: { name: 'pay_order', arguments: args, ...extra, _meta: { ...meta, ...extra._meta } },
+  })).response.result;
+
+  const listed = (await protocol.handle({ jsonrpc: '2.0', id: id++, method: 'tools/list', params: { _meta: withElicitation } })).response.result.tools.find((t) => t.name === 'pay_order');
+  r.push(listed?.annotations?.destructiveHint === true && listed.annotations.readOnlyHint === false
+    ? { level: 'pass', text: 'pay_order is marked as spending money (destructiveHint), so agent apps treat it with care' }
+    : { level: 'fail', text: 'pay_order must be marked destructiveHint: true' });
+
+  const noUi = await call({}, { [META.protocolVersion]: MODERN_VERSIONS[0], [META.clientCapabilities]: {} });
+  r.push(noUi.isError ? { level: 'pass', text: 'Apps that can’t ask the customer get no payment request' } : { level: 'fail', text: 'pay_order offered payment to an app that can’t ask the customer' });
+
+  const first = await call();
+  const asked = first.resultType === 'input_required' && first.inputRequests?.confirm?.method === 'elicitation/create' && !first.structuredContent;
+  r.push(asked ? { level: 'pass', text: 'pay_order asks the customer to confirm before any payment request' } : { level: 'fail', text: 'pay_order must ask the customer before offering a payment request' });
+  if (!asked) return r;
+
+  const declined = await call({ inputResponses: { confirm: { action: 'decline' } }, requestState: first.requestState });
+  r.push(declined.structuredContent?.status === 'declined' ? { level: 'pass', text: 'A declined order isn’t placed or paid' } : { level: 'fail', text: 'A declined confirmation must stop the order' });
+
+  const accept = { inputResponses: { confirm: { action: 'accept', content: { confirm: true } } } };
+  const forged = await call({ ...accept, requestState: `${first.requestState.slice(0, -4)}AAAA` });
+  const otherOrder = (await protocol.handle({
+    jsonrpc: '2.0', id: id++, method: 'tools/call',
+    params: { name: 'pay_order', arguments: { items: [{ sku: item.sku, quantity: 2 }] }, ...accept, requestState: first.requestState, _meta: withElicitation },
+  })).response.result;
+  r.push(forged.resultType === 'input_required' && otherOrder.resultType === 'input_required'
+    ? { level: 'pass', text: 'A confirmation can’t be forged or reused for a different order' }
+    : { level: 'fail', text: 'pay_order accepted a forged or mismatched confirmation' });
+
+  const challenge = await call({ ...accept, requestState: first.requestState });
+  const required = challenge.structuredContent;
+  if (!challenge.isError || required?.x402Version !== 2) return [...r, { level: 'fail', text: 'A confirmed order should get an x402 payment request' }];
+  const published = new Map(payments.payees.map((p) => [p.network, p.payTo.toLowerCase()]));
+  let bound = true;
+  for (const req of required.accepts) {
+    if (published.get(req.network) !== req.payTo.toLowerCase()) bound = false;
+    if (isLnbtc(req.network)) {
+      const inv = decodeInvoice(req.extra.invoice);
+      const expected = mcpRequestHash({ server: payments.server, name: 'pay_order', args });
+      if (inv.descriptionHash !== expected || inv.payee !== req.payTo || inv.amountMsat !== BigInt(req.amount)) bound = false;
+    }
+  }
+  r.push(bound ? { level: 'pass', text: `Payment requests (${required.accepts.map((a) => (isLnbtc(a.network) ? 'Lightning' : 'USDC')).join(', ')}) are bound to the order and pay only the published payee` }
+    : { level: 'fail', text: 'A payment request is not bound to the order or pays someone other than the published payee' });
+
+  const ln = required.accepts.find((a) => isLnbtc(a.network));
+  if (ln) {
+    const { preimage } = await payments.lightning.node.pay(ln.extra.invoice);
+    const pay = { ...accept, requestState: first.requestState, _meta: { [MCP_PAYMENT_KEY]: { x402Version: 2, resource: required.resource, accepted: ln, payload: { preimage } } } };
+    const done = await call(pay);
+    const again = await call(pay);
+    r.push(done.structuredContent?.status === 'paid' ? { level: 'pass', text: 'A paid order is recorded for the business (simulated payment)' } : { level: 'fail', text: `A valid payment was not accepted: ${done.structuredContent?.error ?? done.content?.[0]?.text}` });
+    r.push(again.isError && /duplicate_settlement/.test(again.structuredContent?.error ?? '') ? { level: 'pass', text: 'The same payment can’t be used twice' } : { level: 'fail', text: 'A payment was accepted twice' });
+  }
+  return r;
+}
+
+const inStockOrUnknown = (item) => typeof item.stock !== 'number' || item.stock > 0;
+
 function publishChecks(project) {
   const base = baseUrl(project);
   const r = [];
@@ -193,6 +280,7 @@ export async function checkProject(project, { toolkitVersion, now = new Date() }
     files = generateOutputs(project, toolkitVersion);
     results.push(...grouped('Generated files', fileChecks(project, files)));
     results.push(...grouped('Agent test', await agentChecks(project, toolkitVersion)));
+    if (project.payments) results.push(...grouped('Payments (prototype)', await paymentChecks(project, toolkitVersion)));
   } catch (e) {
     results.push({ group: 'Generated files', level: 'fail', text: `Could not generate files: ${e.message}` });
   }
