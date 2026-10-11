@@ -50,7 +50,7 @@ gentifi build                   # write every agent format to ./dist
 gentifi serve                   # run the MCP connector (HTTP, or --stdio)
 gentifi publish --self-host <dir>   # lay out the files for your own web server
 gentifi check --url <link>      # test a published business, the way an agent would
-gentifi collection check <file or URL> [--verify]   # check a Collection (draft 0.2)
+gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 ```
 
 Run `gentifi <command> --help` for every option. Business details come from flags (`--name`, `--kind`, `--area`, `--hours`, `--email`, `--phone`, `--website`, `--checkout-url`, `--booking-url`, `--base-url`); the toolkit never guesses them, and `check` tells you what's missing.
@@ -109,7 +109,7 @@ A UCP profile is planned for businesses with an online checkout that implements 
 }
 ```
 
-`build` publishes each entry as a `col:memberOf` back-link, which is how a business confirms its membership of a [Collection](https://github.com/SelfBankt/collections-spec) (rule 1).
+`build` publishes each entry as a `col:memberOf` back-link, which is how a business confirms its membership of a [Business Collection](https://github.com/SelfBankt/collections-spec) (rule 1).
 
 ## Develop
 
@@ -125,7 +125,7 @@ SKILL.md                Agent Skill for coding agents
 bin/gentifi.js          CLI entry point
 src/cli.js              argument parsing and command dispatch
 src/commands/           init, sync, build, check, serve, publish, collection
-src/lib/                catalogue import, outputs, checks, QR codes, Collections
+src/lib/                catalogue import, outputs, checks, QR codes, Business Collections
 src/mcp/                MCP tools, protocol (both eras), HTTP and stdio transports, client
 examples/               fictional sample catalogues
 test/                   node:test suite

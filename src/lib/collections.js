@@ -2,7 +2,7 @@ import { COLLECTIONS_NS } from './outputs.js';
 import { URN } from './validate.js';
 
 /**
- * Collections draft 0.2 (github.com/SelfBankt/collections-spec): a collection
+ * Business Collections draft 0.2 (github.com/SelfBankt/collections-spec): a collection
  * is an ARD manifest whose entries are its members, plus a "collection" object.
  * This module validates documents and verifies membership (rule 1).
  */

@@ -4,7 +4,7 @@ import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
 
 export const ARD_CONTEXT = 'https://agenticresourcediscovery.org/context/v1';
-/** Draft vocabulary for Collections (collections-spec, draft 0.2). */
+/** Draft vocabulary for Business Collections (collections-spec, draft 0.2). */
 export const COLLECTIONS_NS = 'https://gentifi.com/standards/collections/v0.2#';
 export const SERVER_CARD_SCHEMA = 'https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json';
 
@@ -96,7 +96,7 @@ export function ardManifest(project, toolkitVersion) {
     version: toolkitVersion,
     updatedAt: project.catalogue.updatedAt,
   };
-  // Collections back-link: this business confirms it belongs to each collection (rule 1).
+  // Business Collections back-link: this business confirms it belongs to each collection (rule 1).
   if (project.memberOf?.length) {
     mcpEntry['@context'] = [ARD_CONTEXT, { col: COLLECTIONS_NS }];
     mcpEntry['col:memberOf'] = project.memberOf.map((m) => ({ collection: m.collection, ...(m.role ? { role: m.role } : {}) }));

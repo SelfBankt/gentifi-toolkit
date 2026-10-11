@@ -5,7 +5,7 @@ import { plural, printResults } from '../lib/report.js';
 const SUBCOMMANDS = ['check'];
 
 export default {
-  summary: 'Check a Collection (draft 0.2): a show, market or high street',
+  summary: 'Check a Business Collection (draft 0.2): a show, market or high street',
   usage: 'check <file or URL> [--verify] [--published-at <url>] [--json]',
   positionals: true,
   options: {
@@ -35,7 +35,7 @@ export default {
     }
 
     const collectionUrl = isUrl ? target : values['published-at'];
-    const results = validateCollection(doc, { servedFrom: collectionUrl }).map((r) => ({ group: 'Collection', ...r }));
+    const results = validateCollection(doc, { servedFrom: collectionUrl }).map((r) => ({ group: 'Business Collection', ...r }));
     let membership = [];
     if (values.verify) {
       if (!collectionUrl) {
@@ -56,7 +56,7 @@ export default {
       out(JSON.stringify({ target, valid: fails === 0, results }, null, 2));
       return fails ? 1 : 0;
     }
-    out(`Collection check for ${target}\n`);
+    out(`Business Collection check for ${target}\n`);
     printResults(results, out);
     out('');
     const confirmed = membership.filter((m) => m.status === 'confirmed').length;
