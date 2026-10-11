@@ -1,0 +1,321 @@
+import { generateOutputs, serverInfo, serverInstructions } from './outputs.js';
+import { ORDER_METHODS, baseUrl, isLocalUrl, mcpUrl, publisherHost } from './project.js';
+import { findInstructions, projectTextFields } from './safety.js';
+import { validateArdManifest, validateServerCard, validateSkill } from './validate.js';
+import { createProtocol, META, MODERN_VERSIONS, LEGACY_VERSIONS } from '../mcp/protocol.js';
+import { businessTools } from '../mcp/tools.js';
+import { McpHttpClient } from '../mcp/client.js';
+
+/**
+ * The Gentified test: can agents find the business, read its prices, and
+ * reach an order that the customer confirms? Results are grouped for display:
+ * { group, level: 'pass' | 'warn' | 'fail' | 'info', text }.
+ */
+
+const SECRET = /\b(shpat_[a-f0-9]{16,}|shpss_[a-f0-9]{16,}|sk_live_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const DAY = 24 * 60 * 60 * 1000;
+
+function grouped(group, results) {
+  return results.map((r) => ({ group, ...r }));
+}
+
+function businessChecks(project) {
+  const b = project.business;
+  const o = project.ordering ?? {};
+  const r = [];
+  r.push(b.name ? { level: 'pass', text: `Name: ${b.name}` } : { level: 'fail', text: 'Add the business name' });
+  r.push(/^[a-z0-9]+(-[a-z0-9]+)*$/.test(b.slug ?? '') && b.slug.length <= 64
+    ? { level: 'pass', text: `Link name: ${b.slug}` }
+    : { level: 'fail', text: 'business.slug must be lower-case letters, numbers and single hyphens (at most 64)' });
+  if (!b.kind) r.push({ level: 'warn', text: 'Say what kind of business it is (for example "Farm shop"), so agents can match local requests' });
+  if (!b.description) r.push({ level: 'warn', text: 'Add a one-line description in your own words' });
+  if (!b.area && !b.address?.postcode) r.push({ level: 'warn', text: 'Add a postcode area, so "near me" requests can find you' });
+  if (!b.openingHours?.length) r.push({ level: 'warn', text: 'Add opening hours (for example "Mo-Fr 09:00-17:00")' });
+
+  if (!o.method) {
+    r.push({ level: 'fail', text: 'Say how customers order: a checkout link, a booking page, or an email or phone number for reservations' });
+  } else if (!ORDER_METHODS.includes(o.method)) {
+    r.push({ level: 'fail', text: `Unknown ordering method "${o.method}". Use one of: ${ORDER_METHODS.join(', ')}` });
+  } else {
+    const needs = {
+      checkout: o.checkoutUrl || project.catalogue.items.every((i) => i.url) ? null : 'a checkout link (--checkout-url) or a url for every item',
+      booking: o.bookingUrl ? null : 'a booking page link (--booking-url)',
+      reserve: b.email || b.telephone ? null : 'an email address or phone number for reservations',
+      quote: b.email || b.telephone ? null : 'an email address or phone number for quote requests',
+    }[o.method];
+    r.push(needs ? { level: 'fail', text: `Ordering by ${o.method} needs ${needs}` } : { level: 'pass', text: `Customers order by: ${o.method}` });
+  }
+  for (const [label, url] of [['Website', b.website], ['Checkout link', o.checkoutUrl], ['Booking link', o.bookingUrl]]) {
+    if (url && !/^https:\/\//.test(url)) r.push({ level: 'warn', text: `${label} should start with https://` });
+  }
+  if (b.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(b.email)) r.push({ level: 'fail', text: `"${b.email}" doesn't look like an email address` });
+  return r;
+}
+
+function catalogueChecks(project, now) {
+  const items = project.catalogue.items;
+  const r = [];
+  if (!items.length) return [{ level: 'fail', text: 'The catalogue has no items' }];
+  r.push({ level: 'pass', text: `${items.length} item${items.length === 1 ? '' : 's'} in the catalogue` });
+  const skus = new Set();
+  const dupes = items.filter((i) => (skus.has(i.sku) ? true : (skus.add(i.sku), false)));
+  if (dupes.length) r.push({ level: 'fail', text: `Duplicate SKUs: ${[...new Set(dupes.map((i) => i.sku))].join(', ')}` });
+  const badPrice = items.filter((i) => {
+    const p = i.price ?? i.priceFrom;
+    return typeof p !== 'number' || !Number.isFinite(p) || p < 0;
+  });
+  if (badPrice.length) r.push({ level: 'fail', text: `Items without a valid price: ${badPrice.map((i) => i.name).join(', ')}` });
+  else r.push({ level: 'pass', text: 'Every item has a price' });
+  if (!items.some((i) => typeof i.stock === 'number' || typeof i.inStock === 'boolean')) {
+    r.push({ level: 'warn', text: 'No stock levels: agents can\'t tell customers what\'s in stock' });
+  }
+  const age = (now - new Date(project.catalogue.updatedAt)) / DAY;
+  if (age > 7) r.push({ level: 'warn', text: `Prices and stock were last updated ${Math.floor(age)} days ago. Run "gentifi sync"` });
+  return r;
+}
+
+function safetyChecks(project) {
+  const findings = findInstructions(projectTextFields(project));
+  const r = findings.map((f) => ({ level: 'fail', text: `${f.where} ${f.why}: "${f.excerpt}"` }));
+  if (!findings.length) r.push({ level: 'pass', text: 'Information, not instructions: no business text tells agents what to do' });
+  if (SECRET.test(JSON.stringify(project))) r.push({ level: 'fail', text: 'gentifi.json seems to contain a secret key or token. Keep secrets in environment variables' });
+  return r;
+}
+
+function fileChecks(project, files) {
+  const r = [];
+  const parse = (path) => {
+    try {
+      return JSON.parse(files.get(path));
+    } catch {
+      r.push({ level: 'fail', text: `${path} is not valid JSON` });
+      return null;
+    }
+  };
+  const manifest = parse('.well-known/ard.json');
+  if (manifest) r.push(...validateArdManifest(manifest, { expectHost: publisherHost(project) }));
+  const card = parse('mcp/server-card.json');
+  if (card) r.push(...validateServerCard(card));
+  r.push(...validateSkill(files.get('SKILL.md')));
+  const ld = parse('business.jsonld');
+  if (ld) {
+    const offers = ld.hasOfferCatalog?.itemListElement?.length ?? 0;
+    r.push(ld['@context'] === 'https://schema.org' && ld['@type'] && offers === project.catalogue.items.length
+      ? { level: 'pass', text: `schema.org ${ld['@type']} with ${offers} offer${offers === 1 ? '' : 's'}` }
+      : { level: 'fail', text: 'business.jsonld is missing its schema.org type or offers' });
+  }
+  r.push(/<path fill="#05414D" d="M/.test(files.get('badge.svg') ?? '')
+    ? { level: 'pass', text: `Badge with a scannable code for ${baseUrl(project)}` }
+    : { level: 'fail', text: 'badge.svg has no QR code' });
+  r.push(files.get('index.html')?.includes('rel="ard"')
+    ? { level: 'pass', text: 'Scan-to-add page links to the discovery manifest' }
+    : { level: 'fail', text: 'index.html does not link to ard.json' });
+  if (project.a2a?.url) {
+    const agentCard = parse('.well-known/agent-card.json');
+    if (agentCard) r.push({ level: 'pass', text: `A2A agent card for ${project.a2a.url}` });
+  }
+  return r;
+}
+
+/** Calls the business's own MCP tools in-process, as an agent would. */
+async function agentChecks(project, toolkitVersion) {
+  const r = [];
+  const protocol = createProtocol({ serverInfo: serverInfo(project, toolkitVersion), instructions: serverInstructions(project), tools: businessTools(project) });
+  const meta = { [META.protocolVersion]: MODERN_VERSIONS[0], [META.clientInfo]: { name: 'gentifi-check', version: '1' }, [META.clientCapabilities]: {} };
+  let id = 1;
+  const modern = async (method, params = {}) => (await protocol.handle({ jsonrpc: '2.0', id: id++, method, params: { ...params, _meta: meta } })).response;
+
+  const discover = await modern('server/discover');
+  r.push(discover.result?.resultType === 'complete'
+    ? { level: 'pass', text: `MCP ${MODERN_VERSIONS[0]}: server/discover answers` }
+    : { level: 'fail', text: 'server/discover failed' });
+  const legacy = (await protocol.handle({ jsonrpc: '2.0', id: id++, method: 'initialize', params: { protocolVersion: LEGACY_VERSIONS[0], capabilities: {}, clientInfo: { name: 'gentifi-check', version: '1' } } })).response;
+  r.push(legacy.result?.protocolVersion === LEGACY_VERSIONS[0]
+    ? { level: 'pass', text: `Older agents (MCP ${LEGACY_VERSIONS[0]}) can connect too` }
+    : { level: 'fail', text: 'Legacy initialize failed' });
+
+  const tools = (await modern('tools/list')).result?.tools ?? [];
+  const unlabelled = tools.filter((t) => !t.title || (t.annotations?.readOnlyHint === undefined && t.annotations?.destructiveHint === undefined));
+  r.push(unlabelled.length
+    ? { level: 'fail', text: `Tools need a title and readOnlyHint or destructiveHint: ${unlabelled.map((t) => t.name).join(', ')}` }
+    : { level: 'pass', text: `${tools.length} tools, each with a title and safety hints (connector directories ask for both)` });
+
+  const call = async (name, args) => (await modern('tools/call', { name, arguments: args })).result;
+  const unfindable = [];
+  for (const item of project.catalogue.items) {
+    const res = await call('search_catalogue', { query: item.name, limit: 50 });
+    if (!res.structuredContent?.items?.some((i) => i.sku === item.sku)) unfindable.push(item.name);
+  }
+  r.push(unfindable.length
+    ? { level: 'fail', text: `Agents can't find these by name: ${unfindable.join(', ')}` }
+    : { level: 'pass', text: 'Agents can find every item by name' });
+
+  const first = project.catalogue.items[0];
+  if (first) {
+    const avail = await call('check_availability', { sku: first.sku });
+    r.push(avail.isError ? { level: 'fail', text: `check_availability failed: ${avail.content?.[0]?.text}` } : { level: 'pass', text: `Agents can check availability (${first.name})` });
+    const order = await call('prepare_order', { items: [{ sku: first.sku, quantity: 1 }] });
+    const s = order.structuredContent;
+    if (order.isError || s?.status !== 'not_ordered' || s?.confirmationRequired !== true) {
+      r.push({ level: 'fail', text: 'prepare_order must return a summary for the customer to confirm, without ordering' });
+    } else if (s.nextStep?.type === 'contact') {
+      r.push({ level: 'warn', text: 'Orders end with "contact the business": set an ordering method so customers can confirm in one step' });
+    } else {
+      r.push({ level: 'pass', text: `Every order ends with the customer confirming (${s.nextStep.type}: ${s.nextStep.label})` });
+    }
+  }
+  const bad = await call('prepare_order', { items: [] });
+  r.push(bad.isError ? { level: 'pass', text: 'Bad requests get a clear error, not an order' } : { level: 'fail', text: 'prepare_order accepted an empty order' });
+  return r;
+}
+
+function publishChecks(project) {
+  const base = baseUrl(project);
+  const r = [];
+  if (isLocalUrl(base)) {
+    r.push({ level: 'warn', text: `Files point to ${base}: fine for testing. Set your real address before publishing (--base-url)` });
+  } else {
+    r.push(/^https:\/\//.test(base) ? { level: 'pass', text: `Published at ${base}` } : { level: 'fail', text: `${base} should use https://` });
+  }
+  const mcp = mcpUrl(project);
+  if (!isLocalUrl(mcp) && !/^https:\/\//.test(mcp)) r.push({ level: 'fail', text: `MCP endpoint ${mcp} should use https://` });
+  return r;
+}
+
+export async function checkProject(project, { toolkitVersion, now = new Date() }) {
+  let files;
+  const results = [
+    ...grouped('Business details', businessChecks(project)),
+    ...grouped('Catalogue', catalogueChecks(project, now)),
+    ...grouped('Safety', safetyChecks(project)),
+  ];
+  try {
+    files = generateOutputs(project, toolkitVersion);
+    results.push(...grouped('Generated files', fileChecks(project, files)));
+    results.push(...grouped('Agent test', await agentChecks(project, toolkitVersion)));
+  } catch (e) {
+    results.push({ group: 'Generated files', level: 'fail', text: `Could not generate files: ${e.message}` });
+  }
+  results.push(...grouped('Publishing', publishChecks(project)));
+  return results;
+}
+
+// --- Remote: check a published business by its link ---
+
+async function fetchText(url, fetchImpl, accept) {
+  const res = await fetchImpl(url, { headers: { accept }, redirect: 'follow', signal: AbortSignal.timeout(10000) });
+  return { ok: res.ok, status: res.status, type: res.headers.get('content-type') ?? '', text: await res.text(), url: res.url || url };
+}
+
+/** Finds the discovery manifest for a link: the link itself, its <link rel="ard">, or the domain's well-known paths. */
+async function discover(url, fetchImpl) {
+  const tried = [];
+  const first = await fetchText(url, fetchImpl, 'application/json, text/html;q=0.9');
+  if (first.ok && /json/.test(first.type)) {
+    try {
+      const doc = JSON.parse(first.text);
+      if (Array.isArray(doc.entries)) return { manifest: doc, where: url, page: null };
+    } catch { /* fall through */ }
+  }
+  const page = first.ok && /html/.test(first.type) ? first.text : null;
+  if (page) {
+    const link = /<link\b[^>]*\brel=["']?(ard|ai-catalog)["']?[^>]*>/i.exec(page);
+    const href = link && /\bhref=["']?([^"' >]+)/i.exec(link[0])?.[1];
+    if (href) {
+      const target = new URL(href, first.url).href;
+      tried.push(target);
+      const res = await fetchText(target, fetchImpl, 'application/json');
+      if (res.ok) return { manifest: JSON.parse(res.text), where: target, page };
+    }
+  }
+  for (const path of ['/.well-known/ard.json', '/.well-known/ai-catalog.json']) {
+    const target = new URL(path, url).href;
+    tried.push(target);
+    const res = await fetchText(target, fetchImpl, 'application/json').catch(() => null);
+    if (res?.ok) {
+      try {
+        return { manifest: JSON.parse(res.text), where: target, page };
+      } catch { /* not JSON */ }
+    }
+  }
+  return { manifest: null, tried, page };
+}
+
+export async function checkRemote(url, { fetchImpl = globalThis.fetch } = {}) {
+  const results = [];
+  const add = (group, level, text) => results.push({ group, level, text });
+
+  let found;
+  try {
+    found = await discover(url, fetchImpl);
+  } catch (e) {
+    add('Discovery', 'fail', `Could not load ${url}: ${e.message}`);
+    return results;
+  }
+  if (!found.manifest) {
+    add('Discovery', 'fail', `No discovery manifest found (tried ${[url, ...(found.tried ?? [])].join(', ')})`);
+    return results;
+  }
+  add('Discovery', 'pass', `Discovery manifest at ${found.where}`);
+  if (/ai-catalog\.json$/.test(found.where)) add('Discovery', 'warn', 'Found at the older ai-catalog.json path; ARD v0.91 uses /.well-known/ard.json');
+  results.push(...grouped('Discovery', validateArdManifest(found.manifest)));
+  if (found.page && /application\/ld\+json/.test(found.page)) add('Discovery', 'pass', 'The page includes schema.org data');
+
+  for (const entry of found.manifest.entries ?? []) {
+    if (entry.type === 'application/ai-skill+md' && entry.url) {
+      const res = await fetchText(entry.url, fetchImpl, 'text/markdown, text/plain').catch((e) => ({ ok: false, status: e.message }));
+      if (res.ok) results.push(...grouped('Agent Skill', validateSkill(res.text)));
+      else add('Agent Skill', 'fail', `Could not load ${entry.url} (${res.status})`);
+    }
+    if (entry.type !== 'application/mcp-server-card+json') continue;
+    let card = entry.data;
+    if (!card && entry.url) {
+      const res = await fetchText(entry.url, fetchImpl, 'application/json').catch((e) => ({ ok: false, status: e.message }));
+      if (!res.ok) {
+        add('MCP connector', 'fail', `Could not load the server card ${entry.url} (${res.status})`);
+        continue;
+      }
+      card = JSON.parse(res.text);
+    }
+    results.push(...grouped('MCP connector', validateServerCard(card)));
+    for (const remote of (card.remotes ?? []).filter((x) => x.type === 'streamable-http')) {
+      results.push(...grouped('MCP connector', await remoteAgentTest(remote.url, fetchImpl)));
+    }
+  }
+  return results;
+}
+
+/** Talks to a live MCP endpoint. Only calls tools marked read-only: a check must never order anything. */
+async function remoteAgentTest(url, fetchImpl) {
+  const r = [];
+  const client = new McpHttpClient(url, { fetchImpl });
+  try {
+    const era = await client.connect();
+    r.push({ level: 'pass', text: `${url} answers (MCP ${client.version}${era === 'legacy' ? ', older protocol' : ''})` });
+  } catch (e) {
+    return [{ level: 'fail', text: `Could not connect to ${url}: ${e.cause?.code ?? e.message}` }];
+  }
+  let tools = [];
+  try {
+    tools = (await client.request('tools/list')).tools ?? [];
+  } catch (e) {
+    return [...r, { level: 'fail', text: `tools/list failed: ${e.message}` }];
+  }
+  const unlabelled = tools.filter((t) => !t.title && !t.annotations?.title);
+  r.push(unlabelled.length
+    ? { level: 'warn', text: `Tools without a title: ${unlabelled.map((t) => t.name).join(', ')}` }
+    : { level: 'pass', text: `${tools.length} tools: ${tools.map((t) => t.name).join(', ')}` });
+  const search = tools.find((t) => t.name === 'search_catalogue' && t.annotations?.readOnlyHint === true);
+  if (search) {
+    try {
+      const res = await client.request('tools/call', { name: 'search_catalogue', arguments: {} });
+      const count = res.structuredContent?.total;
+      r.push(res.isError ? { level: 'fail', text: 'search_catalogue returned an error' } : { level: 'pass', text: `Agents can read the catalogue${count != null ? ` (${count} items)` : ''}` });
+    } catch (e) {
+      r.push({ level: 'fail', text: `search_catalogue failed: ${e.message}` });
+    }
+  }
+  const risky = tools.filter((t) => t.annotations?.readOnlyHint !== true);
+  if (risky.length) r.push({ level: 'info', text: `Not called because they may change things: ${risky.map((t) => t.name).join(', ')}` });
+  return r;
+}

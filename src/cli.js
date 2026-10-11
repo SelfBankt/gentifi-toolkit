@@ -1,19 +1,20 @@
 import { parseArgs } from 'node:util';
-import { readFile } from 'node:fs/promises';
 import init from './commands/init.js';
+import sync from './commands/sync.js';
 import build from './commands/build.js';
 import check from './commands/check.js';
+import serve from './commands/serve.js';
 import publish from './commands/publish.js';
+import collection from './commands/collection.js';
+import { VERSION } from './lib/version.js';
 
-export const commands = { init, build, check, publish };
-
-const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+export const commands = { init, sync, build, check, serve, publish, collection };
 
 export function helpText() {
   const width = Math.max(...Object.keys(commands).map((n) => n.length));
   const lines = Object.entries(commands).map(([name, cmd]) => `  ${name.padEnd(width)}  ${cmd.summary}`);
   return [
-    `gentifi ${pkg.version}: make a business agent-ready`,
+    `gentifi ${VERSION}: make a business agent-ready`,
     '',
     'Usage: gentifi <command> [options]',
     '',
@@ -46,7 +47,7 @@ export async function main(argv, io = {}) {
     return 0;
   }
   if (name === '--version' || name === '-v') {
-    out(pkg.version);
+    out(VERSION);
     return 0;
   }
 
@@ -61,7 +62,7 @@ export async function main(argv, io = {}) {
     parsed = parseArgs({
       args: rest,
       options: { help: { type: 'boolean', short: 'h' }, ...stripDescriptions(cmd.options) },
-      allowPositionals: false,
+      allowPositionals: Boolean(cmd.positionals),
     });
   } catch (e) {
     err(`${e.message}\n\n${commandHelp(name, cmd)}`);
@@ -72,7 +73,7 @@ export async function main(argv, io = {}) {
     out(commandHelp(name, cmd));
     return 0;
   }
-  return cmd.run(parsed.values, { out, err });
+  return cmd.run(parsed.values, { out, err }, parsed.positionals);
 }
 
 function stripDescriptions(options = {}) {

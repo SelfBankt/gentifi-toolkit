@@ -1,4 +1,4 @@
-sku,name,price_gbp,stock,unit,available_from
-EGG-12,Free-range eggs (dozen),3.20,40,box,
-BRD-SD,Sourdough loaf,4.50,12,loaf,Fri
-VEG-BOX,Seasonal veg box,18.00,15,box,Thu
+sku,name,price_gbp,stock,unit,category,availability
+EGG-12,Free-range eggs (dozen),3.20,40,box,Eggs and dairy,In stock
+BRD-SD,Sourdough loaf,4.50,12,loaf,Bakery,Baked Fri and Sat
+VEG-BOX,Seasonal veg box,18.00,15,box,Fruit and veg,Order by Thursday
