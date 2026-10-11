@@ -2,11 +2,33 @@
 
 **Turn any business catalogue into everything AI agents need to find, price, book and buy.**
 
-The Gentifi Toolkit is open source. Point it at a catalogue (Shopify, CSV, WooCommerce or a booking system) and it generates the files and server an AI agent needs to work with the business: an MCP server, UCP profile, SKILL.md, A2A agent card and ai-catalog.json.
+The Gentifi Toolkit is open source. Point it at a catalogue and it generates what an AI agent needs to work with the business: a live MCP connector, a discovery manifest, an MCP server card, an Agent Skill, schema.org data, a scan-to-add page and a window sticker with a QR code.
 
 It works for consumers (B2C) and business buyers (B2B) on the same rails.
 
-> **Status: early concept.** The command-line interface and project layout are in place; the commands themselves are not implemented yet. Each one prints what it will do. Issues and ideas are welcome.
+> **Status: early preview (0.1).** Spreadsheets (CSV, including a Google Sheet published as CSV) work end to end. Shopify, WooCommerce and booking-system imports, and publishing to the Gentifi network, are planned: those commands say so and exit with code 2.
+
+## Try it in a minute
+
+Requires Node.js 20 or later. No dependencies.
+
+```bash
+npx github:SelfBankt/gentifi-toolkit init --from csv \
+  --file https://raw.githubusercontent.com/SelfBankt/gentifi-toolkit/main/examples/demo-farm-shop.csv \
+  --name "Hollow Lane Farm Shop" --kind "Farm shop" --area BS \
+  --email orders@hollowlane.example --hours "Tu-Sa 09:00-17:00"
+
+npx github:SelfBankt/gentifi-toolkit check    # the Gentified test
+npx github:SelfBankt/gentifi-toolkit serve    # connector at http://localhost:8787/mcp
+```
+
+Then add it to an agent and ask *"Have they got eggs this week? Reserve a dozen for Saturday."* With Claude Code, for example:
+
+```bash
+claude mcp add --transport http hollow-lane http://localhost:8787/mcp
+```
+
+The agent can search the catalogue, check stock and prepare the reservation. It can't order anything: `prepare_order` returns a summary and an email link that the customer sends themselves.
 
 ## Set up with your coding agent
 
@@ -21,44 +43,75 @@ Set up https://raw.githubusercontent.com/SelfBankt/gentifi-toolkit/main/SKILL.md
 ## Commands
 
 ```bash
-gentifi init --from shopify     # or csv, woocommerce, a booking system
-gentifi build                   # generate every agent format
+gentifi init --from csv --file <path or URL> --name "…"   # import a catalogue, create gentifi.json
+gentifi sync                    # refresh prices and stock from the same spreadsheet
 gentifi check                   # the Gentified test: can agents find and buy?
-gentifi publish                 # self-host, or publish to the Gentifi network
+gentifi build                   # write every agent format to ./dist
+gentifi serve                   # run the MCP connector (HTTP, or --stdio)
+gentifi publish --self-host <dir>   # lay out the files for your own web server
+gentifi check --url <link>      # test a published business, the way an agent would
+gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 ```
+
+Run `gentifi <command> --help` for every option. Business details come from flags (`--name`, `--kind`, `--area`, `--hours`, `--email`, `--phone`, `--website`, `--checkout-url`, `--booking-url`, `--base-url`); the toolkit never guesses them, and `check` tells you what's missing.
+
+### Spreadsheet columns
+
+One row per product or service. Header names are flexible (`Price (£)` and `price_gbp` both work); comma, semicolon and tab exports all read.
+
+| Column | Required | Example |
+| --- | --- | --- |
+| `name` | yes | Free-range eggs (dozen) |
+| `price_gbp` (or `price`) | yes, or `price_from` | 3.20 |
+| `price_from_gbp` | for quotes and services | 85 |
+| `sku` | no (made from the name) | EGG-12 |
+| `stock` | no | 40, or yes / no / sold out |
+| `unit` | no | box |
+| `category` | no | Eggs and dairy |
+| `availability` | no | Baked Fri and Sat |
+| `description`, `url`, `kind` (`product` or `service`) | no | |
+
+Rows without a name or a usable price are skipped and reported, never guessed. For a Google Sheet, use *File > Share > Publish to web > CSV* and pass that link to `--file`; `gentifi sync` picks up changes.
 
 ## What it generates
 
-| Input | Output |
-| --- | --- |
-| Catalogue, prices, stock | MCP server with search, price, availability and order tools |
-| Bookings or services | UCP profile and booking or quote tools |
-| Business details | A2A agent card and ai-catalog.json for discovery |
-| Everything above | SKILL.md for headless agents |
-| Business identity | Gentified badge with a scannable "add to your agent" code |
+| File | What it's for | Standard |
+| --- | --- | --- |
+| MCP connector (`gentifi serve`) | Tools agents call: `search_catalogue`, `check_availability`, `prepare_order`, `get_business_info` | [MCP](https://modelcontextprotocol.io) 2026-07-28, and 2025-11-25 clients |
+| `.well-known/ard.json`, `ard.json` | Discovery: tells agents this business has a connector and a skill | [Agentic Resource Discovery](https://agenticresourcediscovery.org/spec) v0.91 |
+| `.well-known/ai-catalog.json` | The same manifest at the older path some tools still read | ARD predecessor |
+| `mcp/server-card.json` | Where and how to connect, before connecting | [MCP Server Cards](https://modelcontextprotocol.io/seps/2127-mcp-server-cards) v1 |
+| `SKILL.md` | Instructions and a catalogue snapshot for headless agents | [Agent Skills](https://agentskills.io) |
+| `business.jsonld` | The business and its offers for search engines and AI search | [schema.org](https://schema.org) |
+| `index.html` | The scan-to-add page the badge opens | |
+| `badge.svg` | Window sticker with a scannable "add to your agent" code | |
+| `.well-known/agent-card.json` | Only when the business runs an A2A endpoint (`a2a.url` in gentifi.json) | [A2A](https://a2a-protocol.org) 1.0 |
 
-## Standards it builds on
-
-The toolkit uses existing open standards rather than inventing new formats.
-
-| Layer | Standard |
-| --- | --- |
-| Tools and data | [Model Context Protocol (MCP)](https://modelcontextprotocol.io) |
-| Agent instructions | [Agent Skills (SKILL.md)](https://agentskills.io) |
-| Agent to agent | [A2A](https://a2a-protocol.org) |
-| Discovery | Agentic Resource Discovery (ai-catalog.json) |
-| Commerce | UCP and ACP |
-| Payments | x402, L402, AP2 |
+A UCP profile is planned for businesses with an online checkout that implements UCP; the toolkit won't publish one that points at nothing.
 
 ## Design rules
 
-- **The customer always approves.** Connecting an agent to a business, and every order, is confirmed by the customer in their own app. Generated files offer metadata ("this business has a connector, here it is"), never hidden instructions telling an agent to install something.
-- **Open formats.** Everything the toolkit writes follows the published spec for that format, so it works without Gentifi.
-- **Self-host or not.** `gentifi publish` can lay out files for your own domain, including `/.well-known/`, for businesses that want to run it themselves.
+- **The customer always approves.** Every tool is read-only. Connecting an agent to a business, and every order, is confirmed by the customer in their own app or on the business's own checkout.
+- **Information, not instructions.** Generated files say "this business has a connector, here it is". `gentifi check` fails any business text that tries to instruct an agent (prompt injection).
+- **Real data only.** Prices, stock and hours come from the business. Missing details are reported, not invented.
+- **Open formats.** Everything follows the published spec for that format, so it works without Gentifi.
+- **Self-host or not.** `publish --self-host` lays out the files for your own domain; `serve` runs the connector anywhere Node runs.
 
-## Try it
+## gentifi.json
 
-Requires Node.js 20 or later. No dependencies yet.
+`init` writes the project file every other command reads. Edit it by hand to add an address, a description, an A2A endpoint, or the collections the business belongs to:
+
+```json
+{
+  "memberOf": [
+    { "collection": "https://traders.example/collections/demo-high-street.json", "role": { "category": "farm shop" } }
+  ]
+}
+```
+
+`build` publishes each entry as a `col:memberOf` back-link, which is how a business confirms its membership of a [Business Collection](https://github.com/SelfBankt/collections-spec) (rule 1).
+
+## Develop
 
 ```bash
 git clone https://github.com/SelfBankt/gentifi-toolkit.git
@@ -67,15 +120,13 @@ node bin/gentifi.js --help
 npm test
 ```
 
-`examples/demo-farm-shop.csv` is a small fictional catalogue to develop against.
-
-## Project layout
-
 ```
 SKILL.md                Agent Skill for coding agents
 bin/gentifi.js          CLI entry point
 src/cli.js              argument parsing and command dispatch
-src/commands/           init, build, check, publish
+src/commands/           init, sync, build, check, serve, publish, collection
+src/lib/                catalogue import, outputs, checks, QR codes, Business Collections
+src/mcp/                MCP tools, protocol (both eras), HTTP and stdio transports, client
 examples/               fictional sample catalogues
 test/                   node:test suite
 ```

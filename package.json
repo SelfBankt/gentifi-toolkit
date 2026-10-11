@@ -1,6 +1,6 @@
 {
   "name": "gentifi-toolkit",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Turn any business catalogue into everything AI agents need to find, price, book and buy.",
   "license": "Apache-2.0",
   "type": "module",
