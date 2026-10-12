@@ -85,6 +85,10 @@ function itemView(item, currency) {
     stock: item.stock ?? undefined,
     inStock: inStock(item) ?? undefined,
     availability: item.availability || undefined,
+    // Allergens and dietary notes are exactly as the business gave them; when absent, they're unknown, not "none"
+    allergens: item.allergens || undefined,
+    dietary: item.dietary || undefined,
+    notice: item.notice || undefined,
     url: item.url || undefined,
   };
 }

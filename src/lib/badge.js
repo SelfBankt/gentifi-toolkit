@@ -51,3 +51,72 @@ ${monoText(shown, { x: 87, y: 890, size: 22, fill: MUTED, maxWidth: 500 })}
 </svg>
 `;
 }
+
+function centredText(text, { y, size, fill, weight = 400, font = SANS, maxWidth = 900, x = 525 }) {
+  const natural = text.length * size * (font === MONO ? 0.6 : 0.55);
+  const fit = natural > maxWidth ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+  return `<text x="${x}" y="${y}" text-anchor="middle" font-family="${font}" font-size="${size}" font-weight="${weight}" fill="${fill}"${fit}>${escapeXml(text)}</text>`;
+}
+
+/**
+ * The counter card for the till: A6 portrait (105 x 148 mm), white, with a large
+ * scannable code. 1050 x 1480 units, ten to the millimetre.
+ */
+export function counterCardSvg({ businessName, link }) {
+  const qr = encodeQr(link, { level: 'M' });
+  const n = qr.size + 8;
+  const shown = link.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const label = `Gentifi counter card for ${businessName}: scan to add us to your AI agent (${shown})`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 1480" role="img" aria-labelledby="t">
+<title id="t">${escapeXml(label)}</title>
+<rect x="2" y="2" width="1046" height="1476" rx="60" fill="${WHITE}" stroke="${TEAL}" stroke-width="4"/>
+<g transform="translate(330 70) scale(0.95)">${MARK(TEAL, 10)}</g>
+<text x="460" y="155" font-family="${SANS}" font-weight="700" font-size="76" fill="${TEAL}">Gentifi</text>
+<g transform="translate(722 98) scale(2.6)"><circle cx="12" cy="12" r="11" fill="${COPPER}"/><path d="M6.5 12.5 L10.5 16.5 L17.5 8" fill="none" stroke="${TEAL}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>
+${centredText('Ask your AI agent', { y: 320, size: 92, weight: 700, fill: TEAL })}
+${centredText('Scan to add', { y: 410, size: 42, fill: TEAL })}
+${centredText(businessName, { y: 468, size: 48, weight: 700, fill: TEAL })}
+${centredText('to Claude, ChatGPT or any agent.', { y: 526, size: 42, fill: TEAL })}
+${centredText('Then just ask what we have, prices or opening times.', { y: 584, size: 34, fill: '#3D4A5C' })}
+<rect x="225" y="640" width="600" height="600" rx="44" fill="${TEAL}"/>
+<rect x="245" y="660" width="560" height="560" rx="28" fill="${WHITE}"/>
+<svg x="265" y="680" width="520" height="520" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path fill="${TEAL}" d="${qrPath(qr)}"/></svg>
+${centredText(shown, { y: 1310, size: 32, font: MONO, fill: TEAL })}
+${centredText(`Or tell your agent: "Add ${businessName} on Gentifi"`, { y: 1372, size: 28, font: MONO, fill: '#3D4A5C' })}
+${centredText('Agent-ready · works with any MCP agent', { y: 1430, size: 26, font: MONO, fill: '#3D4A5C', maxWidth: 640 })}
+</svg>
+`;
+}
+
+/** An A4 page with each sign at its real size, for printing or saving as a PDF. */
+export function signsHtml({ businessName, link }) {
+  return `<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gentifi signs for ${escapeXml(businessName)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  body { font-family: ${SANS}; color: ${TEAL}; margin: 24px; }
+  .help { max-width: 40rem; margin-bottom: 24px; line-height: 1.5; }
+  .sign { page-break-after: always; break-after: page; display: grid; gap: 8px; justify-items: start; margin-bottom: 32px; }
+  .sign:last-child { page-break-after: auto; break-after: auto; }
+  .sign svg { display: block; }
+  .window svg { width: 150mm; height: 150mm; }
+  .counter svg { width: 105mm; height: 148mm; }
+  .size { font-family: ${MONO}; font-size: 12px; color: #3D4A5C; }
+  @media print { .help { display: none; } body { margin: 0; } }
+</style>
+</head>
+<body>
+<div class="help">
+  <h1>Gentifi signs for ${escapeXml(businessName)}</h1>
+  <p>Print at 100% (no "fit to page"), or save as a PDF for a print shop. The window sticker is 150 mm square and the counter card is A6. Both codes open ${escapeXml(link)}, where customers add you to their own agent and approve it in their own app.</p>
+</div>
+<section class="sign window">${badgeSvg({ businessName, link })}<span class="size">Window sticker, 150 x 150 mm</span></section>
+<section class="sign counter">${counterCardSvg({ businessName, link })}<span class="size">Counter card, A6 (105 x 148 mm)</span></section>
+</body>
+</html>
+`;
+}

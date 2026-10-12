@@ -9,7 +9,7 @@ const json = (project, path) => JSON.parse(files(project).get(path));
 
 test('writes every agent format, and the A2A card only when there is an A2A endpoint', () => {
   assert.deepEqual([...files().keys()].sort(), [
-    '.well-known/ai-catalog.json', '.well-known/ard.json', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'index.html', 'mcp/server-card.json',
+    '.well-known/ai-catalog.json', '.well-known/ard.json', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'counter-card.svg', 'index.html', 'mcp/server-card.json', 'signs.html',
   ]);
   const withA2a = demoProject({ a2a: { url: 'https://hollowlane.example/a2a' } });
   const card = json(withA2a, '.well-known/agent-card.json');
@@ -104,4 +104,24 @@ test('a hand-edited item without a price does not break the build', () => {
   const offer = json(project, 'business.jsonld').hasOfferCatalog.itemListElement[0];
   assert.equal(offer.price, undefined);
   assert.equal(offer.itemOffered.name, 'Free-range eggs (dozen)');
+});
+
+test('printed signs use the short link when there is one, and a bakery sheet carries allergens and notice', async () => {
+  const { readSource } = await import('../src/lib/catalogue.js');
+  const project = demoProject();
+  project.publish = { ...project.publish, shortUrl: 'https://gentifi.com/b/hollow-lane' };
+  const out = files(project);
+  for (const f of ['badge.svg', 'counter-card.svg']) assert.match(out.get(f), /gentifi\.com\/b\/hollow-lane \)|gentifi\.com\/b\/hollow-lane\)/);
+  assert.match(out.get('signs.html'), /Counter card, A6/);
+  assert.match(out.get('counter-card.svg'), /viewBox="0 0 1050 1480"/);
+  const bakery = await readSource({ type: 'csv', file: new URL('../examples/bakery-template.csv', import.meta.url).pathname });
+  assert.deepEqual(bakery.problems, []);
+  const cake = bakery.items.find((i) => i.sku === 'CAKE-8');
+  assert.equal(cake.allergens, 'Wheat (gluten), milk, egg');
+  assert.equal(cake.notice, '3 days');
+  const shop = demoProject();
+  shop.catalogue.items = bakery.items;
+  const skill = files(shop).get('SKILL.md');
+  assert.match(skill, /Order 3 days ahead/);
+  assert.match(skill, /never assume it is free from anything/);
 });

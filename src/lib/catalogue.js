@@ -17,6 +17,9 @@ const COLUMNS = {
   description: ['description', 'details', 'notes'],
   kind: ['kind'],
   url: ['url', 'link', 'product_url'],
+  allergens: ['allergens', 'allergen', 'contains', 'allergy_info', 'allergen_info'],
+  dietary: ['dietary', 'diet', 'suitable_for', 'dietary_info'],
+  notice: ['notice', 'order_notice', 'pre_order_notice', 'preorder_notice', 'lead_time', 'pre_order', 'preorder'],
 };
 
 const CURRENCY_FROM_HEADER = { price_gbp: 'GBP', price_from_gbp: 'GBP', price_eur: 'EUR', price_usd: 'USD' };
@@ -108,6 +111,9 @@ export function itemsFromRecords(records) {
       inStock,
       availability: pick(r, 'availability').value,
       url: pick(r, 'url').value,
+      allergens: pick(r, 'allergens').value,
+      dietary: pick(r, 'dietary').value,
+      notice: pick(r, 'notice').value,
     });
   }
   return { items, problems };

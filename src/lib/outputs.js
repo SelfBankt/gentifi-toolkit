@@ -1,4 +1,4 @@
-import { badgeSvg, escapeXml } from './badge.js';
+import { badgeSvg, counterCardSvg, escapeXml, signsHtml } from './badge.js';
 import { baseUrl, describePrice, humanHours, inStock, mcpUrl, publisherHost } from './project.js';
 import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
@@ -250,7 +250,8 @@ ${b.name} has an MCP connector at ${mcpUrl(project)} with the tools \`search_cat
 
 | Item | SKU | Price | Stock | Availability |
 | --- | --- | --- | --- | --- |
-${items.map((i) => `| ${md(i.name)} | ${md(i.sku)} | ${md(describePrice(i, i.currency || currency))} | ${typeof i.stock === 'number' ? i.stock : inStock(i) === null ? 'not given' : inStock(i) ? 'in stock' : 'out of stock'} | ${md(i.availability) || '-'} |`).join('\n')}
+${items.map((i) => `| ${md(i.name)} | ${md(i.sku)} | ${md(describePrice(i, i.currency || currency))} | ${typeof i.stock === 'number' ? i.stock : inStock(i) === null ? 'not given' : inStock(i) ? 'in stock' : 'out of stock'} | ${md([i.availability, i.notice && `Order ${i.notice} ahead`].filter(Boolean).join('; ')) || '-'} |`).join('\n')}
+${items.some((i) => i.allergens || i.dietary) ? `\nAllergens and dietary notes, exactly as ${md(b.name)} gives them. If an item has none listed, say you don't know and suggest asking the shop: never assume it is free from anything.\n\n${items.filter((i) => i.allergens || i.dietary).map((i) => `- ${md(i.name)}: ${[i.allergens && `contains ${md(i.allergens)}`, i.dietary && md(i.dietary)].filter(Boolean).join('; ')}`).join('\n')}\n` : ''}
 ${b.openingHours?.length ? `\n## Opening hours\n\n${b.openingHours.map((h) => `- ${md(humanHours(h))}`).join('\n')}\n` : ''}
 ## Ordering
 
@@ -386,6 +387,9 @@ export function landingPage(project, payees = []) {
  * Every file the toolkit publishes, keyed by path relative to the business's base URL.
  * @returns {Map<string, string>}
  */
+/** What printed signs link to: a short link such as gentifi.com/b/<business> when set, else the business's own address. */
+export const signLink = (project) => project.publish?.shortUrl || baseUrl(project);
+
 export function generateOutputs(project, toolkitVersion, { payees = [] } = {}) {
   const json = (v) => JSON.stringify(v, null, 2) + '\n';
   const manifest = json(ardManifest(project, toolkitVersion, payees));
@@ -398,7 +402,9 @@ export function generateOutputs(project, toolkitVersion, { payees = [] } = {}) {
     ['mcp/server-card.json', json(serverCard(project, toolkitVersion))],
     ['SKILL.md', skillMd(project, toolkitVersion, payees)],
     ['business.jsonld', json(jsonLd(project, payees))],
-    ['badge.svg', badgeSvg({ businessName: project.business.name, link: baseUrl(project) })],
+    ['badge.svg', badgeSvg({ businessName: project.business.name, link: signLink(project) })],
+    ['counter-card.svg', counterCardSvg({ businessName: project.business.name, link: signLink(project) })],
+    ['signs.html', signsHtml({ businessName: project.business.name, link: signLink(project) })],
   ]);
   if (project.a2a?.url) files.set('.well-known/agent-card.json', json(agentCard(project, toolkitVersion)));
   return files;
