@@ -282,7 +282,9 @@ export function landingPage(project, payees = []) {
   const action = method === 'booking' ? 'book' : method === 'quote' ? 'ask for a quote' : method === 'checkout' ? 'order' : 'reserve something';
   const firstItem = project.catalogue.items[0]?.name;
   const example = firstItem ? `“Have they got ${firstItem.replace(/\s*\(.*\)$/, '').toLowerCase()}?”` : '“What do they have today?”';
-  const appSteps = TESTED_APPS.map((app) => `<li>${e(ADD_STEPS[app])}</li>`).join('');
+  // Web addresses in the steps, such as chatgpt.com/plugins, become links a phone can open
+  const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
+  const appSteps = TESTED_APPS.map((app) => `<li>${linked(ADD_STEPS[app]).replace(`In ${e(app)}`, `<strong>In ${e(app)}</strong>`)}</li>`).join('');
 
   return `<!doctype html>
 <html lang="en-GB">
@@ -311,6 +313,7 @@ export function landingPage(project, payees = []) {
   .steps li::marker { color: var(--copper); font-weight: 700; }
   .steps .connector { margin-top: 8px; }
   .steps ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .steps a { color: #fff; font-weight: 600; }
   section { padding: 28px 0; }
   section.grey { background: var(--grey); }
   h2 { font-size: 1.25rem; margin: 0 0 14px; }
