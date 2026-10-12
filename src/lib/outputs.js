@@ -1,3 +1,4 @@
+import { ADD_STEPS, TESTED_APPS } from './apps.js';
 import { badgeSvg, counterCardSvg, escapeXml, signsHtml } from './badge.js';
 import { baseUrl, describePrice, humanHours, inStock, mcpUrl, publisherHost } from './project.js';
 import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
@@ -277,13 +278,19 @@ export function landingPage(project, payees = []) {
     return `<tr><td>${e(i.name)}</td><td>${e(describePrice(i, i.currency || currency))}</td><td>${e(note)}</td></tr>`;
   }).join('\n          ');
 
+  const method = project.ordering?.method;
+  const action = method === 'booking' ? 'book' : method === 'quote' ? 'ask for a quote' : method === 'checkout' ? 'order' : 'reserve something';
+  const firstItem = project.catalogue.items[0]?.name;
+  const example = firstItem ? `“Have they got ${firstItem.replace(/\s*\(.*\)$/, '').toLowerCase()}?”` : '“What do they have today?”';
+  const appSteps = TESTED_APPS.map((app) => `<li>${e(ADD_STEPS[app])}</li>`).join('');
+
   return `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Add ${e(b.name)} to your AI agent</title>
-<meta name="description" content="${e(`Add ${b.name} to Claude, ChatGPT or any AI agent, then ask it about stock and prices.`)}">
+<title>Ask your AI about ${e(b.name)}</title>
+<meta name="description" content="${e(`Add ${b.name} to your AI assistant, then ask what they have, prices and opening times.`)}">
 <link rel="ard" href="ard.json">
 <link rel="icon" href="badge.svg" type="image/svg+xml">
 <script type="application/ld+json">${JSON.stringify(jsonLd(project, payees)).replace(/</g, '\\u003c')}</script>
@@ -299,7 +306,11 @@ export function landingPage(project, payees = []) {
   .connector { display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .connector code { flex: 1; padding: 12px 14px; font-size: .85rem; overflow-wrap: anywhere; color: #fff; }
   button { font: inherit; font-weight: 600; border: 0; background: var(--copper); color: var(--teal); padding: 0 18px; min-height: 48px; cursor: pointer; }
-  .approve { font-size: .9rem; color: var(--muted); margin: 14px 0 0; }
+  .approve { font-size: .9rem; color: var(--muted); margin: 18px 0 0; }
+  .steps { margin: 0; padding-left: 1.4em; display: grid; gap: 16px; }
+  .steps li::marker { color: var(--copper); font-weight: 700; }
+  .steps .connector { margin-top: 8px; }
+  .steps ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
   section { padding: 28px 0; }
   section.grey { background: var(--grey); }
   h2 { font-size: 1.25rem; margin: 0 0 14px; }
@@ -320,13 +331,19 @@ export function landingPage(project, payees = []) {
 <header>
   <div class="shell">
     <p class="ready">&#10003; Agent-ready</p>
-    <h1>Add ${e(b.name)} to your AI agent</h1>
-    <p class="lede">Then ask your agent about stock, prices and ${project.ordering?.method === 'booking' ? 'bookings' : 'orders'}. You approve the connection, and every order, yourself.</p>
-    <div class="connector">
-      <code id="connector">${e(connector)}</code>
-      <button type="button" data-copy="${e(connector)}">Copy</button>
-    </div>
-    <p class="approve">Paste this link where your agent app adds connectors (sometimes called custom connectors or MCP servers). Your app asks you to approve it. Nothing is added silently.</p>
+    <h1>Add ${e(b.name)} to your AI assistant</h1>
+    <p class="lede">Then ask it what they have, prices and opening times, or to ${action}. You approve the connection, and every order, yourself.</p>
+    <ol class="steps">
+      <li>Copy this link.
+        <div class="connector">
+          <code id="connector">${e(connector)}</code>
+          <button type="button" data-copy="${e(connector)}">Copy</button>
+        </div>
+      </li>
+      <li><ul>${appSteps}</ul></li>
+      <li>Ask, for example: ${e(example)} or “When are they open?”</li>
+    </ol>
+    <p class="approve">Using another AI app? Paste the link wherever it lets you add connectors (sometimes called MCP servers). Your app asks you to approve it, and nothing is added silently.</p>
   </div>
 </header>
 <main>
@@ -347,8 +364,9 @@ export function landingPage(project, payees = []) {
     <div class="shell">
       <h2>Your privacy</h2>
       <ul>
-        <li>The connector can look up the catalogue, prices and stock, and prepare an order for you to confirm.</li>
+        <li>Once added, your AI can look up what they sell, prices and stock, and prepare an order for you to confirm.</li>
         <li>It can't see your other chats, place an order without you, or share your details until you choose to book or buy.</li>
+        <li>You can remove it at any time in your AI app's settings.</li>
       </ul>
     </div>
   </section>
