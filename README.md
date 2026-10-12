@@ -90,6 +90,12 @@ Rows without a name or a usable price are skipped and reported, never guessed. F
 
 A UCP profile is planned for businesses with an online checkout that implements UCP; the toolkit won't publish one that points at nothing.
 
+## Printed signs
+
+`gentifi build` also writes `counter-card.svg` (A6, for the till), `badge.svg` (the 150 mm window sticker) and `signs.html`, which lays both out at their real sizes on A4: print it at 100%, or save it as a PDF for a print shop. The codes open the business's page, or the short link in `publish.shortUrl` when it has one (`gentifi init --short-url https://gentifi.com/b/<business>`), so printed signs survive a move of hosting.
+
+For bakeries and food shops, `examples/bakery-template.csv` adds allergens, dietary notes and pre-order notice. Agents get allergens exactly as given, and are told never to assume an item is free from anything when none are listed.
+
 ## Hosting many businesses
 
 `gentifi host` serves every business in a folder from one process: each sub-folder is a business, named by its slug and holding its `gentifi.json`.

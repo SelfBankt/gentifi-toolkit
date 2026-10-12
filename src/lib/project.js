@@ -54,7 +54,7 @@ export function slugify(text, max = 64) {
 }
 
 /** Builds a new project from business details and imported items. */
-export function createProject({ business, ordering, items, source, baseUrl, now = new Date() }) {
+export function createProject({ business, ordering, items, source, baseUrl, shortUrl, now = new Date() }) {
   const slug = business.slug || slugify(business.name);
   return {
     version: PROJECT_VERSION,
@@ -84,6 +84,7 @@ export function createProject({ business, ordering, items, source, baseUrl, now 
     },
     publish: {
       baseUrl: (baseUrl || LOCAL_BASE_URL).replace(/\/+$/, ''),
+      ...(shortUrl ? { shortUrl: shortUrl.replace(/\/+$/, '') } : {}),
       mcpUrl: '',
     },
     memberOf: [],

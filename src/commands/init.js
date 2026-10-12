@@ -29,6 +29,7 @@ export default {
     'checkout-url': { type: 'string', description: 'Checkout link; {sku} and {quantity} are filled in for single items' },
     'booking-url': { type: 'string', description: 'Booking page link' },
     'base-url': { type: 'string', description: 'Where the files will live (default http://localhost:8787, for testing)' },
+    'short-url': { type: 'string', description: 'Short link for printed signs, such as https://gentifi.com/b/your-business' },
     project: { type: 'string', description: 'Project file (default ./gentifi.json)' },
     force: { type: 'boolean', description: 'Replace an existing project file' },
   },
@@ -57,6 +58,10 @@ export default {
     }
     if (values.order && !ORDER_METHODS.includes(values.order)) {
       err(`Unknown ordering method "${values.order}". Use one of: ${ORDER_METHODS.join(', ')}`);
+      return 1;
+    }
+    if (values['short-url'] && !/^https:\/\/[^/]+/.test(values['short-url'])) {
+      err('--short-url must be a full https address, such as https://gentifi.com/b/your-business');
       return 1;
     }
     if (values['base-url'] && !/^https?:\/\/[^/]+/.test(values['base-url'])) {
@@ -107,6 +112,7 @@ export default {
       items,
       source,
       baseUrl: values['base-url'],
+      shortUrl: values['short-url'],
     });
     await saveProject(path, project);
 

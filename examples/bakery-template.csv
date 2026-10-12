@@ -1,0 +1,5 @@
+sku,name,price_gbp,unit,category,description,allergens,dietary,availability,notice,stock
+SOURDOUGH,Example sourdough loaf,4.50,800 g loaf,Bread,"Replace these example rows with your own",Wheat (gluten),Vegan,Daily,,yes
+SEEDED,Example seeded loaf,4.80,800 g loaf,Bread,,"Wheat (gluten), sesame",Vegan,Tue to Sat,,yes
+CROISSANT,Example croissant,2.20,each,Pastries,,"Wheat (gluten), milk, egg",Vegetarian,Daily from 8am,,yes
+CAKE-8,Example celebration cake (8 inch),38.00,serves 12,Celebration cakes,Choose your flavour when you order,"Wheat (gluten), milk, egg",Vegetarian,Pre-order only,3 days,
