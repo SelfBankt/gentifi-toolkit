@@ -77,7 +77,7 @@ export function serverCard(project, toolkitVersion) {
   };
 }
 
-export function ardManifest(project, toolkitVersion) {
+export function ardManifest(project, toolkitVersion, payees = []) {
   const b = project.business;
   const base = baseUrl(project);
   const host = publisherHost(project);
@@ -91,11 +91,13 @@ export function ardManifest(project, toolkitVersion) {
     url: `${base}/mcp/server-card.json`,
     description: summary(project),
     representativeQueries: queries,
-    capabilities: businessTools(project).map((t) => t.name),
+    capabilities: [...businessTools(project).map((t) => t.name), ...(payees.length ? ['pay_order'] : [])],
     ...(tags.length ? { tags } : {}),
     version: toolkitVersion,
     updatedAt: project.catalogue.updatedAt,
   };
+  // Who payments go to, so an agent can check a payment request pays this business and no one else.
+  if (payees.length) mcpEntry.metadata = { payments: payees };
   // Business Collections back-link: this business confirms it belongs to each collection (rule 1).
   if (project.memberOf?.length) {
     mcpEntry['@context'] = [ARD_CONTEXT, { col: COLLECTIONS_NS }];
@@ -154,7 +156,7 @@ function schemaAvailability(item) {
 }
 
 /** schema.org description of the business and its offers, for search engines and AI search. */
-export function jsonLd(project) {
+export function jsonLd(project, payees = []) {
   const b = project.business;
   const base = baseUrl(project);
   const a = b.address ?? {};
@@ -172,6 +174,7 @@ export function jsonLd(project) {
     ...(hasAddress ? { address: { '@type': 'PostalAddress', streetAddress: a.street || undefined, addressLocality: a.locality || undefined, postalCode: a.postcode || undefined, addressCountry: 'GB' } } : {}),
     ...(b.area ? { areaServed: b.area } : {}),
     ...(b.openingHours?.length ? { openingHours: b.openingHours } : {}),
+    ...(payees.length ? { paymentAccepted: payees.map((p) => (p.rail === 'lightning' ? 'Lightning (bitcoin)' : p.symbol)).join(', ') } : {}),
     hasOfferCatalog: {
       '@type': 'OfferCatalog',
       name: `${b.name} catalogue`,
@@ -199,7 +202,12 @@ export function jsonLd(project) {
 const md = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 
 /** An Agent Skill for headless and self-built agents. Information first; the customer decides. */
-export function skillMd(project, toolkitVersion) {
+const railNames = (payees) => {
+  const names = payees.map((p) => (p.rail === 'lightning' ? 'Lightning' : p.symbol));
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0];
+};
+
+export function skillMd(project, toolkitVersion, payees = []) {
   const b = project.business;
   const items = project.catalogue.items;
   const date = project.catalogue.updatedAt.slice(0, 10);
@@ -249,7 +257,7 @@ ${b.openingHours?.length ? `\n## Opening hours\n\n${b.openingHours.map((h) => `-
 
 ${ordering}${o.notes ? ` ${md(o.notes)}` : ''}
 
-Nothing is ever ordered automatically. Before anything is bought, booked or sent:
+${payees.length ? `If your app can show the customer a confirmation, \`pay_order\` takes payment by ${railNames(payees)}. It asks the customer first, and its payment requests pay only the payees listed in ${b.name}'s discovery manifest. Otherwise use \`prepare_order\`.\n\n` : ''}Nothing is ever ordered automatically. Before anything is bought, booked or sent:
 
 1. Show the user the items, quantities and total.
 2. Let them confirm it themselves. Only send, book or pay when they say so, through ${b.name}'s own checkout, booking page, email or phone.
@@ -258,7 +266,7 @@ Nothing is ever ordered automatically. Before anything is bought, booked or sent
 }
 
 /** The page a phone opens after scanning the badge, for businesses that host their own files. */
-export function landingPage(project) {
+export function landingPage(project, payees = []) {
   const b = project.business;
   const e = escapeXml;
   const connector = mcpUrl(project);
@@ -278,7 +286,7 @@ export function landingPage(project) {
 <meta name="description" content="${e(`Add ${b.name} to Claude, ChatGPT or any AI agent, then ask it about stock and prices.`)}">
 <link rel="ard" href="ard.json">
 <link rel="icon" href="badge.svg" type="image/svg+xml">
-<script type="application/ld+json">${JSON.stringify(jsonLd(project)).replace(/</g, '\\u003c')}</script>
+<script type="application/ld+json">${JSON.stringify(jsonLd(project, payees)).replace(/</g, '\\u003c')}</script>
 <style>
   :root { --teal: #05414D; --line: #1C5D69; --copper: #F09A5C; --grey: #E9EDF2; --muted: #B8C4D3; --ink-muted: #3D4A5C; }
   * { box-sizing: border-box; }
@@ -382,18 +390,18 @@ export function landingPage(project) {
 /** What printed signs link to: a short link such as gentifi.com/b/<business> when set, else the business's own address. */
 export const signLink = (project) => project.publish?.shortUrl || baseUrl(project);
 
-export function generateOutputs(project, toolkitVersion) {
+export function generateOutputs(project, toolkitVersion, { payees = [] } = {}) {
   const json = (v) => JSON.stringify(v, null, 2) + '\n';
-  const manifest = json(ardManifest(project, toolkitVersion));
+  const manifest = json(ardManifest(project, toolkitVersion, payees));
   const files = new Map([
-    ['index.html', landingPage(project)],
+    ['index.html', landingPage(project, payees)],
     ['ard.json', manifest],
     // Root-domain discovery. ARD v0.91 uses ard.json; the predecessor path is still read by some tools.
     ['.well-known/ard.json', manifest],
     ['.well-known/ai-catalog.json', manifest],
     ['mcp/server-card.json', json(serverCard(project, toolkitVersion))],
-    ['SKILL.md', skillMd(project, toolkitVersion)],
-    ['business.jsonld', json(jsonLd(project))],
+    ['SKILL.md', skillMd(project, toolkitVersion, payees)],
+    ['business.jsonld', json(jsonLd(project, payees))],
     ['badge.svg', badgeSvg({ businessName: project.business.name, link: signLink(project) })],
     ['counter-card.svg', counterCardSvg({ businessName: project.business.name, link: signLink(project) })],
     ['signs.html', signsHtml({ businessName: project.business.name, link: signLink(project) })],

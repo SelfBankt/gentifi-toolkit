@@ -52,6 +52,7 @@ gentifi publish --self-host <dir>   # lay out the files for your own web server
 gentifi host --dir <folder> --base-url <url>   # host many businesses from one server
 gentifi check --url <link>      # test a published business, the way an agent would
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
+gentifi payments [--demo]       # agent payments by Lightning, USDC or USDT (prototype)
 ```
 
 Run `gentifi <command> --help` for every option. Business details come from flags (`--name`, `--kind`, `--area`, `--hours`, `--email`, `--phone`, `--website`, `--checkout-url`, `--booking-url`, `--base-url`); the toolkit never guesses them, and `check` tells you what's missing.
@@ -108,6 +109,46 @@ Each business is served under `/b/<slug>/`: its scan-to-add page, discovery file
 
 `deploy/` sets this up on an Ubuntu or Debian VPS: `setup-vps.sh` installs Node.js and Caddy (which handles HTTPS), and runs the host as a locked-down systemd service.
 
+## Payments through the agent (prototype)
+
+`pay_order` lets a customer's agent pay for an order by **Lightning**, **USDC** or **USDT**, using [x402](https://github.com/x402-foundation/x402) over MCP. It runs on test networks, or fully simulated.
+
+```bash
+gentifi payments --demo     # simulated Lightning node, USDC and USDT settlement: no real money
+gentifi serve
+node examples/agent-pay.mjs --item EGG-12:2 --collect Saturday    # in this repository
+node examples/agent-pay.mjs --item EGG-12:2 --rail usdt           # pay with USDT instead
+GENTIFI_PAYER_NWC='…' node examples/agent-pay.mjs --item EGG-12:2 --nwc   # pay from a wallet over NWC
+```
+
+**Wallets over Nostr Wallet Connect (NWC).** A customer's agent can pay from their own Lightning wallet (Alby Hub and others) through an NWC connection string, and the wallet enforces the budget the customer set for that connection. With simulated payments, `gentifi serve` runs a local relay and prints a simulated customer wallet with a 50,000 sat budget. A business can also issue invoices from its own wallet over NWC instead of running LND: `"node": { "type": "nwc", "uriEnv": "GENTIFI_NWC_URI" }`, with `payTo` set to the wallet's node key. A custodial wallet shared by many users won't do, because each business needs its own key.
+
+How it stays safe:
+
+1. **The customer confirms first, in their own app.** `pay_order` answers with an MCP 2026-07-28 confirmation request (an elicitation). Only a confirmed retry, carrying signed request state, gets a payment request. Apps that can't show confirmations get none.
+2. **Every payment request is bound to its order.** The Lightning invoice's description hash commits to the exact tool call (x402 `exact` on `lnbtc`, profile `mcp:1`), so a proof can't buy anything else. USDC and USDT terms must be echoed unchanged.
+3. **Agents can check who they pay.** The ARD manifest publishes the business's Lightning key and its USDC and USDT addresses; `examples/agent-pay.mjs` refuses any request that pays someone else.
+4. **The toolkit never holds money.** Lightning invoices come from the business's own node; USDC and USDT go from the payer straight to the business's address through a facilitator.
+5. **Single use.** Each payment settles once, and each confirmation gets one payment request and pays for one order. The record of used payments, the order log and a signing secret live in `.gentifi/`, which ignores itself in git.
+
+**USDT.** USDT has no signed-transfer function like USDC's (EIP-3009), so it uses x402's Permit2 method. The customer's wallet approves the Permit2 contract for USDT once; after that, each payment is a signature naming the business's address and the exact amount, and x402's proxy contract only pays that address. There's no official USDT on test networks, so `payments.usdt.asset` names a test token. Wallets that hold USDT on Lightning (Taproot Assets) can pay the Lightning invoice instead: their edge node converts, and the business receives bitcoin.
+
+Real test networks:
+
+```json
+"payments": {
+  "rates": { "BTC": "80000", "USD": "1.27" },
+  "lightning": { "network": "testnet", "payTo": "<your node's public key>",
+                 "node": { "type": "lnd", "url": "https://127.0.0.1:8080", "macaroonEnv": "GENTIFI_LND_MACAROON", "tlsCert": "/path/to/tls.cert" } },
+  "usdc": { "network": "eip155:84532", "payTo": "0x<your address>", "facilitator": "https://x402.org/facilitator" },
+  "usdt": { "network": "eip155:84532", "asset": "0x<test token>", "payTo": "0x<your address>", "facilitator": "https://x402.org/facilitator" }
+}
+```
+
+`GENTIFI_LND_MACAROON` holds an *invoice* macaroon (hex): it can create invoices but not spend. Rates are set by hand in this prototype. `gentifi check` runs the whole payment flow against simulated rails, so it never touches a real node.
+
+Not yet: refunds (Lightning `exact` payments are final), receiving USDT over Lightning (Taproot Assets), live exchange rates, sterling stablecoins, and mainnet USDC or USDT.
+
 ## Design rules
 
 - **The customer always approves.** Every tool is read-only. Connecting an agent to a business, and every order, is confirmed by the customer in their own app or on the business's own checkout.
@@ -143,9 +184,10 @@ npm test
 SKILL.md                Agent Skill for coding agents
 bin/gentifi.js          CLI entry point
 src/cli.js              argument parsing and command dispatch
-src/commands/           init, sync, build, check, serve, publish, collection
+src/commands/           init, sync, build, check, serve, publish, payments, collection
 src/lib/                catalogue import, outputs, checks, QR codes, Business Collections
 src/mcp/                MCP tools, protocol (both eras), HTTP and stdio transports, client
+src/payments/           pay_order, x402 (Lightning, USDC and USDT), BOLT 11, secp256k1, keccak
 examples/               fictional sample catalogues
 test/                   node:test suite
 ```

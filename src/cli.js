@@ -6,10 +6,11 @@ import check from './commands/check.js';
 import serve from './commands/serve.js';
 import publish from './commands/publish.js';
 import collection from './commands/collection.js';
+import payments from './commands/payments.js';
 import host from './commands/host.js';
 import { VERSION } from './lib/version.js';
 
-export const commands = { init, sync, build, check, serve, publish, host, collection };
+export const commands = { init, sync, build, check, serve, publish, host, payments, collection };
 
 export function helpText() {
   const width = Math.max(...Object.keys(commands).map((n) => n.length));

@@ -239,29 +239,7 @@ export function businessTools(project) {
       name: 'prepare_order',
       title: 'Prepare an order for the customer to confirm',
       description: `Work out the items and total for an order or reservation at ${name}, with the link the customer uses to confirm it. Nothing is ordered or sent: show the customer the summary and let them decide.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          items: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 50,
-            items: {
-              type: 'object',
-              properties: {
-                sku: { type: 'string', description: 'SKU from search_catalogue' },
-                quantity: { type: 'integer', minimum: 1 },
-              },
-              required: ['sku', 'quantity'],
-              additionalProperties: false,
-            },
-          },
-          collection_date: { type: 'string', description: 'When the customer wants to collect or receive it, in their words' },
-          note: { type: 'string', maxLength: 500, description: 'Anything the customer wants to tell the business' },
-        },
-        required: ['items'],
-        additionalProperties: false,
-      },
+      inputSchema: ORDER_ARGUMENTS,
       outputSchema: {
         type: 'object',
         properties: { status: { const: 'not_ordered' }, confirmationRequired: { const: true }, nextStep: { type: 'object' } },
@@ -269,35 +247,7 @@ export function businessTools(project) {
       },
       annotations: { title: 'Prepare an order for the customer to confirm', ...READ_ONLY },
       handler: ({ items: wanted, collection_date: collectionDate, note }) => {
-        const warnings = [];
-        let totalMinor = 0;
-        let priced = true;
-        const lines = wanted.map(({ sku, quantity }) => {
-          const item = findItem(items, sku);
-          if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to find the SKU.`);
-          const available = inStock(item, quantity);
-          if (available === false) {
-            warnings.push(typeof item.stock === 'number' && item.stock > 0
-              ? `${item.name}: only ${item.stock} in stock, ${quantity} asked for.`
-              : `${item.name}: out of stock.`);
-          }
-          const line = { sku: item.sku, name: item.name, quantity, priceText: describePrice(item, currency), available };
-          if (item.price != null) {
-            const lineMinor = toMinor(item.price) * quantity;
-            totalMinor += lineMinor;
-            line.unitPrice = item.price;
-            line.lineTotal = lineMinor / 100;
-            line.lineTotalText = formatMoney(lineMinor, currency);
-          } else {
-            priced = false;
-            warnings.push(`${item.name}: ${line.priceText}; the business will confirm the price.`);
-          }
-          if (item.url) line.url = item.url;
-          return line;
-        });
-        const total = priced ? { amount: totalMinor / 100, currency, formatted: formatMoney(totalMinor, currency) } : null;
-        const summary = lines.map((l) => `${l.quantity} x ${l.name}${l.lineTotalText ? ` = ${l.lineTotalText}` : ''}`).join('; ')
-          + (total ? `. Total ${total.formatted}.` : '.');
+        const { lines, total, warnings, summary } = priceOrder(items, wanted, currency);
         return {
           status: 'not_ordered',
           confirmationRequired: true,
@@ -313,6 +263,70 @@ export function businessTools(project) {
       },
     },
   ];
+}
+
+/** Arguments for an order: shared by prepare_order and pay_order, so both price the same way. */
+export const ORDER_ARGUMENTS = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 50,
+      items: {
+        type: 'object',
+        properties: {
+          sku: { type: 'string', description: 'SKU from search_catalogue' },
+          quantity: { type: 'integer', minimum: 1 },
+        },
+        required: ['sku', 'quantity'],
+        additionalProperties: false,
+      },
+    },
+    collection_date: { type: 'string', description: 'When the customer wants to collect or receive it, in their words' },
+    note: { type: 'string', maxLength: 500, description: 'Anything the customer wants to tell the business' },
+  },
+  required: ['items'],
+  additionalProperties: false,
+};
+
+/**
+ * Prices an order from the catalogue: lines, total in minor units, and
+ * warnings for shortages or items priced on request.
+ */
+export function priceOrder(items, wanted, currency) {
+  const warnings = [];
+  const short = [];
+  let totalMinor = 0;
+  let priced = true;
+  const lines = wanted.map(({ sku, quantity }) => {
+    const item = findItem(items, sku);
+    if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to find the SKU.`);
+    const available = inStock(item, quantity);
+    if (available === false) {
+      short.push(item.name);
+      warnings.push(typeof item.stock === 'number' && item.stock > 0
+        ? `${item.name}: only ${item.stock} in stock, ${quantity} asked for.`
+        : `${item.name}: out of stock.`);
+    }
+    const line = { sku: item.sku, name: item.name, quantity, priceText: describePrice(item, currency), available };
+    if (item.price != null) {
+      const lineMinor = toMinor(item.price) * quantity;
+      totalMinor += lineMinor;
+      line.unitPrice = item.price;
+      line.lineTotal = lineMinor / 100;
+      line.lineTotalText = formatMoney(lineMinor, currency);
+    } else {
+      priced = false;
+      warnings.push(`${item.name}: ${line.priceText}; the business will confirm the price.`);
+    }
+    if (item.url) line.url = item.url;
+    return line;
+  });
+  const total = priced ? { amount: totalMinor / 100, currency, formatted: formatMoney(totalMinor, currency) } : null;
+  const summary = lines.map((l) => `${l.quantity} x ${l.name}${l.lineTotalText ? ` = ${l.lineTotalText}` : ''}`).join('; ')
+    + (total ? `. Total ${total.formatted}.` : '.');
+  return { lines, totalMinor, total, priced, short, warnings, summary };
 }
 
 // --- Argument validation (the JSON Schema subset the tools use) ---
