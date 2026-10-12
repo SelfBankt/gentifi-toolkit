@@ -93,8 +93,16 @@ test('business text is escaped everywhere it is shown', () => {
 
 test('the badge carries the business link and the brand', () => {
   const svg = files().get('badge.svg');
-  assert.match(svg, /<title id="t">Gentifi window sticker for Hollow Lane Farm Shop: scan to add us to your AI agent \(hollowlane.example\)<\/title>/);
+  assert.match(svg, /<title id="t">Gentifi window sticker for Hollow Lane Farm Shop: scan to add us to your AI assistant \(hollowlane.example\)<\/title>/);
   assert.match(svg, />Agent-ready business</);
+  assert.match(svg, />Works in Claude today</);
+  const card = files().get('counter-card.svg');
+  assert.match(card, />Ask your AI about us</);
+  assert.doesNotMatch(card, /on Gentifi"|ChatGPT|any agent/, 'signs only promise apps we have tested');
+  const page = files().get('index.html');
+  assert.match(page, /Add Hollow Lane Farm Shop to your AI assistant/);
+  assert.match(page, /In Claude, open Settings, then Connectors, and choose Add custom connector/);
+  assert.match(page, /Have they got free-range eggs\?/);
   assert.match(svg, /<path fill="#05414D" d="M4 4h7/);
 });
 
