@@ -1,0 +1,20 @@
+[Unit]
+Description=Gentifi host: hosted business connectors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gentifi
+Group=gentifi
+WorkingDirectory=/srv/gentifi/toolkit
+ExecStart=/usr/bin/node bin/gentifi.js host --dir /srv/gentifi/businesses --base-url https://mcp.gentifi.com --port 8787
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/gentifi/businesses
+
+[Install]
+WantedBy=multi-user.target
