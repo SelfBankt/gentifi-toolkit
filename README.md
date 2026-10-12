@@ -49,6 +49,7 @@ gentifi check                   # the Gentified test: can agents find and buy?
 gentifi build                   # write every agent format to ./dist
 gentifi serve                   # run the MCP connector (HTTP, or --stdio)
 gentifi publish --self-host <dir>   # lay out the files for your own web server
+gentifi host --dir <folder> --base-url <url>   # host many businesses from one server
 gentifi check --url <link>      # test a published business, the way an agent would
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 ```
@@ -88,6 +89,18 @@ Rows without a name or a usable price are skipped and reported, never guessed. F
 | `.well-known/agent-card.json` | Only when the business runs an A2A endpoint (`a2a.url` in gentifi.json) | [A2A](https://a2a-protocol.org) 1.0 |
 
 A UCP profile is planned for businesses with an online checkout that implements UCP; the toolkit won't publish one that points at nothing.
+
+## Hosting many businesses
+
+`gentifi host` serves every business in a folder from one process: each sub-folder is a business, named by its slug and holding its `gentifi.json`.
+
+```bash
+gentifi host --dir ./businesses --base-url https://mcp.gentifi.com
+```
+
+Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and its connector at `/b/<slug>/mcp`. Every 10 minutes (`--sync-minutes`) the host re-reads each business's published Google Sheet and picks up new or changed folders. A sheet that comes back empty or broken never replaces the last good catalogue, and one broken business never stops the others. `/healthz` reports how many businesses are live.
+
+`deploy/` sets this up on an Ubuntu or Debian VPS: `setup-vps.sh` installs Node.js and Caddy (which handles HTTPS), and runs the host as a locked-down systemd service.
 
 ## Design rules
 
