@@ -26,7 +26,7 @@ echo "== Gentifi user, toolkit and businesses folder"
 id gentifi >/dev/null 2>&1 || useradd --system --home /srv/gentifi --shell /usr/sbin/nologin gentifi
 mkdir -p /srv/gentifi/businesses
 if [ -d /srv/gentifi/toolkit/.git ]; then
-  git -C /srv/gentifi/toolkit pull --ff-only
+  runuser -u gentifi -- git -C /srv/gentifi/toolkit pull --ff-only
 else
   git clone https://github.com/SelfBankt/gentifi-toolkit.git /srv/gentifi/toolkit
 fi

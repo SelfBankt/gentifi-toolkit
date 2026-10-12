@@ -3,7 +3,7 @@
 # Run as root on the VPS:  bash /srv/gentifi/toolkit/deploy/add-demo.sh
 set -euo pipefail
 cd /srv/gentifi/toolkit
-git pull --ff-only
+runuser -u gentifi -- git pull --ff-only
 mkdir -p /srv/gentifi/businesses/demo-business
 node bin/gentifi.js init --force --from csv --file examples/demo-farm-shop.csv \
   --name "Hollow Lane Farm Shop" --kind "Farm shop" \
