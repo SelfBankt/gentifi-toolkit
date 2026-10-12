@@ -186,7 +186,7 @@ async function paymentChecks(project, toolkitVersion) {
   if (problems.length) return problems.map((text) => ({ level: 'fail', text }));
   const r = [];
   const cfg = project.payments;
-  if (cfg.lightning) r.push({ level: cfg.lightning.network === 'mainnet' && cfg.lightning.node !== 'simulated' ? 'warn' : 'info', text: cfg.lightning.node === 'simulated' ? 'Lightning: simulated node, no real money' : `Lightning: LND on ${cfg.lightning.network}${cfg.lightning.network === 'mainnet' ? '. Real money: this is a prototype' : ''}` });
+  if (cfg.lightning) r.push({ level: cfg.lightning.network === 'mainnet' && cfg.lightning.node !== 'simulated' ? 'warn' : 'info', text: cfg.lightning.node === 'simulated' ? 'Lightning: simulated node, no real money' : `Lightning: ${cfg.lightning.node.type === 'nwc' ? 'a wallet over Nostr Wallet Connect' : 'LND'} on ${cfg.lightning.network}${cfg.lightning.network === 'mainnet' ? '. Real money: this is a prototype' : ''}` });
   if (cfg.usdc) r.push({ level: 'info', text: cfg.usdc.facilitator === 'simulated' ? 'USDC: Base Sepolia terms with simulated settlement, no real money' : 'USDC: Base Sepolia, settled by the configured facilitator' });
   if (cfg.usdt) {
     const method = (cfg.usdt.transferMethod ?? 'permit2') === 'permit2' ? 'Permit2' : 'EIP-3009';

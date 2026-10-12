@@ -4,6 +4,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { DEFAULT_FEATURES, decodeInvoice, encodeInvoice } from './bolt11.js';
 import { N, bytesToBigInt, publicKey } from './secp256k1.js';
+import { nwcClient } from './nwc.js';
 import { LNBTC } from './x402.js';
 
 /**
@@ -32,6 +33,7 @@ export function simulatedNode({ network = 'testnet', privateKey = randomPrivateK
   const issued = new Map();
   return {
     simulated: true,
+    kind: 'simulated',
     network: net.network,
     payTo,
     async createInvoice({ amountMsat, descriptionHash, expiry }) {
@@ -54,6 +56,33 @@ export function simulatedNode({ network = 'testnet', privateKey = randomPrivateK
       if (!known || known.invoice !== invoice) throw new Error('This simulated node did not issue that invoice');
       if (now() > inv.timestamp + inv.expiry) throw new Error('Invoice expired');
       return { status: 'paid', preimage: known.preimage, paymentHash: inv.paymentHash, amountMsat: String(inv.amountMsat) };
+    },
+  };
+}
+
+/**
+ * A wallet reached over Nostr Wallet Connect (NIP-47), such as Alby Hub. The
+ * business side asks it to make invoices (make_invoice); a payer asks it to pay
+ * them (pay_invoice), within the budget set in the wallet. `payTo` must be the
+ * wallet's own node key: a custodial wallet shared by many users won't do, as
+ * the x402 Lightning scheme requires each business to have its own key.
+ */
+export function nwcNode({ uri, network = 'testnet', payTo, connect }) {
+  const net = LNBTC[network];
+  if (!net) throw new Error(`Unknown Lightning network "${network}"`);
+  const client = nwcClient(uri, connect ? { connect } : {});
+  return {
+    simulated: false,
+    kind: 'nwc',
+    network: net.network,
+    payTo,
+    async createInvoice({ amountMsat, descriptionHash, expiry }) {
+      const made = await client.makeInvoice({ amountMsat, descriptionHash, expiry });
+      return { invoice: made.invoice, paymentHash: made.payment_hash ?? decodeInvoice(made.invoice).paymentHash };
+    },
+    async pay(invoice) {
+      const paid = await client.payInvoice(invoice);
+      return { status: 'paid', preimage: paid.preimage };
     },
   };
 }
@@ -97,6 +126,7 @@ export async function lndNode({ url, macaroon, tlsCert, network = 'testnet', pay
   });
   return {
     simulated: false,
+    kind: 'lnd',
     network: net.network,
     payTo,
     async createInvoice({ amountMsat, descriptionHash, expiry }) {

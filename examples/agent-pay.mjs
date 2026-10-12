@@ -12,6 +12,9 @@
 //   Lightning, simulated (default when the server runs a simulated node): no money moves.
 //   Lightning, your own LND node: --lnd-url https://127.0.0.1:8080 [--lnd-cert tls.cert]
 //     with GENTIFI_PAYER_MACAROON set to a macaroon allowed to send payments (hex).
+//   Lightning, your own wallet over Nostr Wallet Connect: --nwc, with GENTIFI_PAYER_NWC set to
+//     the wallet's connection string (Alby Hub and others). The wallet enforces its budget.
+//     `gentifi serve` prints a simulated one when payments are simulated.
 //   USDC or USDT (--rail usdc | usdt): GENTIFI_PAYER_KEY set to a test wallet's private
 //     key (hex). Without it, a throwaway key is used, which only a simulated facilitator
 //     accepts. USDT is paid with Permit2, which a real wallet approves once per token.
@@ -24,6 +27,7 @@ import { parseArgs } from 'node:util';
 import { McpHttpClient } from '../src/mcp/client.js';
 import { decodeInvoice } from '../src/payments/bolt11.js';
 import { lndNode, randomPrivateKey } from '../src/payments/lightning.js';
+import { nwcClient } from '../src/payments/nwc.js';
 import { formatSats, formatToken } from '../src/payments/quote.js';
 import { MCP_PAYMENT_KEY, MCP_PAYMENT_RESPONSE_KEY, isLnbtc, mcpRequestHash, signEvmPayment, transferMethodOf } from '../src/payments/x402.js';
 
@@ -35,6 +39,7 @@ const { values } = parseArgs({
     rail: { type: 'string' },
     'lnd-url': { type: 'string' },
     'lnd-cert': { type: 'string' },
+    nwc: { type: 'boolean' },
   },
 });
 
@@ -113,7 +118,18 @@ if (isLnbtc(requirement.network)) {
   }
   say(`\nPaying ${formatSats(requirement.amount)} by Lightning…`);
   let paid;
-  if (values['lnd-url']) {
+  if (values.nwc) {
+    if (!process.env.GENTIFI_PAYER_NWC) stop('Set GENTIFI_PAYER_NWC to your wallet’s Nostr Wallet Connect string.');
+    const wallet = nwcClient(process.env.GENTIFI_PAYER_NWC);
+    say(`  (asking your wallet over Nostr Wallet Connect)`);
+    try {
+      paid = await wallet.payInvoice(requirement.extra.invoice);
+    } catch (e) {
+      if (e.code === 'QUOTA_EXCEEDED') stop('Your wallet refused: this payment is over the budget you set for this connection.');
+      if (e.code === 'INSUFFICIENT_BALANCE') stop('Your wallet refused: not enough balance.');
+      stop(`Your wallet refused: ${e.message}`);
+    }
+  } else if (values['lnd-url']) {
     const node = await lndNode({ url: values['lnd-url'], macaroon: process.env.GENTIFI_PAYER_MACAROON, tlsCert: values['lnd-cert'], network: 'testnet' });
     paid = await node.pay(requirement.extra.invoice);
   } else {

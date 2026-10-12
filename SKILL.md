@@ -103,7 +103,7 @@ The connector itself needs a server running `gentifi serve` (behind their web se
 `pay_order` lets customers' agents pay by Lightning, USDC or USDT on test networks. Only set it up if the user asks.
 
 - `gentifi payments --demo` adds a fully simulated setup (no real money) for trying it.
-- For real test networks, the user needs their own Lightning node (an *invoice* macaroon in an environment variable) and/or a Base Sepolia address. Never put macaroons or private keys in `gentifi.json`. Never point it at mainnet.
+- For real test networks, the user needs their own Lightning node (an *invoice* macaroon in an environment variable) or a wallet's Nostr Wallet Connect string (in an environment variable), and/or a Base Sepolia address. Never put macaroons or private keys in `gentifi.json`. Never point it at mainnet.
 - USDT is paid with Permit2. There's no official USDT on test networks, so `payments.usdt.asset` must name a test token; ask the user which one.
 - `.gentifi/` holds used payments, the order log and a signing secret. It ignores itself in git; never force-add it.
 

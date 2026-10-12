@@ -245,12 +245,16 @@ test('end to end over HTTP: the demo agent confirms, checks and pays', async () 
     await writeFile(projectFile, JSON.stringify(project));
     const server = spawn(process.execPath, [BIN, 'serve', '--port', String(port), '--project', projectFile], { stdio: ['ignore', 'pipe', 'pipe'] });
     try {
+      let banner = '';
       await new Promise((resolve, reject) => {
-        server.stdout.on('data', (d) => { if (String(d).includes('Press Ctrl+C')) resolve(); });
+        server.stdout.on('data', (d) => {
+          banner += d;
+          if (banner.includes('Press Ctrl+C')) resolve();
+        });
         server.on('exit', () => reject(new Error('server exited')));
       });
-      const run = (input, extra) => new Promise((resolve) => {
-        const agent = spawn(process.execPath, [AGENT, '--mcp', `http://localhost:${port}/mcp`, '--item', 'VEG-BOX:1', ...extra], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const run = (input, extra, env = {}) => new Promise((resolve) => {
+        const agent = spawn(process.execPath, [AGENT, '--mcp', `http://localhost:${port}/mcp`, '--item', 'VEG-BOX:1', ...extra], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env } });
         let out = '';
         agent.stdout.on('data', (d) => { out += d; });
         agent.stderr.on('data', (d) => { out += d; });
@@ -265,10 +269,16 @@ test('end to end over HTTP: the demo agent confirms, checks and pays', async () 
       assert.equal(usdt.code, 0, usdt.out);
       assert.match(usdt.out, /Signing a Permit2 payment of 22\.86 USDT to 0x/);
       assert.match(usdt.out, /✓ Paid 22\.86 USDT \(simulated test payment: no money moved\)/);
+      const nwcUri = /GENTIFI_PAYER_NWC='([^']+)'/.exec(banner)?.[1];
+      assert.ok(nwcUri, 'serve prints a simulated NWC wallet');
+      const viaNwc = await run('y\n', ['--rail', 'lightning', '--nwc'], { GENTIFI_PAYER_NWC: nwcUri });
+      assert.equal(viaNwc.code, 0, viaNwc.out);
+      assert.match(viaNwc.out, /asking your wallet over Nostr Wallet Connect/);
+      assert.match(viaNwc.out, /✓ Paid 22,500 sats by Lightning/);
       const declined = await run('n\n', []);
       assert.match(declined.out, /The customer declined\. Nothing was ordered or paid\./);
       const orders = (await readFile(join(dir, '.gentifi', 'orders.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
-      assert.deepEqual(orders.map((o) => [o.payment.rail, o.total.formatted]), [['lightning', '£18.00'], ['usdt', '£18.00']]);
+      assert.deepEqual(orders.map((o) => [o.payment.rail, o.total.formatted]), [['lightning', '£18.00'], ['usdt', '£18.00'], ['lightning', '£18.00']]);
       assert.match(await readFile(join(dir, '.gentifi', '.gitignore'), 'utf8'), /^\*$/m);
     } finally {
       server.kill();

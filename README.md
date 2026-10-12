@@ -99,7 +99,10 @@ gentifi payments --demo     # simulated Lightning node, USDC and USDT settlement
 gentifi serve
 node examples/agent-pay.mjs --item EGG-12:2 --collect Saturday    # in this repository
 node examples/agent-pay.mjs --item EGG-12:2 --rail usdt           # pay with USDT instead
+GENTIFI_PAYER_NWC='…' node examples/agent-pay.mjs --item EGG-12:2 --nwc   # pay from a wallet over NWC
 ```
+
+**Wallets over Nostr Wallet Connect (NWC).** A customer's agent can pay from their own Lightning wallet (Alby Hub and others) through an NWC connection string, and the wallet enforces the budget the customer set for that connection. With simulated payments, `gentifi serve` runs a local relay and prints a simulated customer wallet with a 50,000 sat budget. A business can also issue invoices from its own wallet over NWC instead of running LND: `"node": { "type": "nwc", "uriEnv": "GENTIFI_NWC_URI" }`, with `payTo` set to the wallet's node key. A custodial wallet shared by many users won't do, because each business needs its own key.
 
 How it stays safe:
 
@@ -125,7 +128,7 @@ Real test networks:
 
 `GENTIFI_LND_MACAROON` holds an *invoice* macaroon (hex): it can create invoices but not spend. Rates are set by hand in this prototype. `gentifi check` runs the whole payment flow against simulated rails, so it never touches a real node.
 
-Not yet: Nostr Wallet Connect and other wallets, refunds (Lightning `exact` payments are final), receiving USDT over Lightning (Taproot Assets), live exchange rates, sterling stablecoins, and mainnet USDC or USDT.
+Not yet: refunds (Lightning `exact` payments are final), receiving USDT over Lightning (Taproot Assets), live exchange rates, sterling stablecoins, and mainnet USDC or USDT.
 
 ## Design rules
 

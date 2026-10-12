@@ -1,12 +1,15 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 /**
  * secp256k1 arithmetic with BigInt: public keys, ECDSA signature recovery and
  * deterministic (RFC 6979) signing with low-S normalisation.
  *
+ * Also BIP-340 Schnorr signatures and x-only ECDH, for Nostr.
+ *
  * Recovery and verification only touch public data. Signing is NOT constant
- * time: the toolkit uses it for its simulated Lightning node, test vectors and
- * the demo payer, never for keys that hold real money.
+ * time: the toolkit uses it for its simulated Lightning node, test vectors, the
+ * demo payer and Nostr Wallet Connect requests. An NWC connection key can spend
+ * up to the budget its wallet allows, so give the prototype small budgets.
  */
 
 export const P = 2n ** 256n - 2n ** 32n - 977n;
@@ -189,4 +192,61 @@ export function sign(hash, privateKey) {
     recid ^= 1;
   }
   return { r, s, recid };
+}
+
+// --- BIP-340 Schnorr signatures and x-only keys (Nostr) ---
+
+const sha256 = (...parts) => createHash('sha256').update(Buffer.concat(parts.map((p) => Buffer.from(p)))).digest();
+const tagHashes = new Map();
+function taggedHash(tag, ...data) {
+  if (!tagHashes.has(tag)) tagHashes.set(tag, sha256(Buffer.from(tag, 'utf8')));
+  const t = tagHashes.get(tag);
+  return sha256(t, t, ...data);
+}
+const toScalar = (k) => (typeof k === 'bigint' ? k : bytesToBigInt(k));
+
+/** 32-byte x-only public key (BIP-340). */
+export function xOnlyPublicKey(privateKey) {
+  return bigIntToBytes(publicKeyPoint(privateKey).x);
+}
+
+/** BIP-340 signature of a 32-byte message. `aux` is 32 bytes of randomness (zeros for test vectors). */
+export function schnorrSign(message, privateKey, aux = randomBytes(32)) {
+  const m = Buffer.from(message);
+  const d0 = toScalar(privateKey);
+  const p = publicKeyPoint(d0);
+  const d = p.y & 1n ? N - d0 : d0;
+  const px = bigIntToBytes(p.x);
+  const t = Buffer.from(bigIntToBytes(d).map((b, i) => b ^ taggedHash('BIP0340/aux', aux)[i]));
+  const k0 = bytesToBigInt(taggedHash('BIP0340/nonce', t, px, m)) % N;
+  if (k0 === 0n) throw new Error('Schnorr nonce is zero');
+  const r = affine(multiply(G, k0));
+  const k = r.y & 1n ? N - k0 : k0;
+  const rx = bigIntToBytes(r.x);
+  const e = bytesToBigInt(taggedHash('BIP0340/challenge', rx, px, m)) % N;
+  return Buffer.concat([rx, bigIntToBytes(mod(k + e * d, N))]);
+}
+
+/** Verifies a BIP-340 signature against a 32-byte x-only public key. */
+export function schnorrVerify(signature, message, publicKeyX) {
+  const sig = Buffer.from(signature);
+  const pub = Buffer.from(publicKeyX);
+  if (sig.length !== 64 || pub.length !== 32) return false;
+  const p = lift(bytesToBigInt(pub), 0);
+  if (!p) return false;
+  const r = bytesToBigInt(sig.subarray(0, 32));
+  const s = bytesToBigInt(sig.subarray(32));
+  if (r >= P || s >= N) return false;
+  const e = bytesToBigInt(taggedHash('BIP0340/challenge', sig.subarray(0, 32), pub, Buffer.from(message))) % N;
+  const point = affine(add(multiply(G, s), multiply(p, mod(N - e, N))));
+  return !!point && (point.y & 1n) === 0n && point.x === r;
+}
+
+/** ECDH with an x-only public key: the 32-byte x coordinate of the shared point. */
+export function sharedX(privateKey, publicKeyX) {
+  const p = lift(bytesToBigInt(Buffer.from(publicKeyX)), 0);
+  if (!p) throw new Error('Invalid public key');
+  const d = toScalar(privateKey);
+  if (d <= 0n || d >= N) throw new Error('Private key out of range');
+  return bigIntToBytes(affine(multiply(p, d)).x);
 }

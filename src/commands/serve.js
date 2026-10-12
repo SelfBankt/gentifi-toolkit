@@ -7,6 +7,8 @@ import { generateOutputs, serverInfo, serverInstructions } from '../lib/outputs.
 import { ProjectError, loadProject, projectPath } from '../lib/project.js';
 import { VERSION } from '../lib/version.js';
 import { createPayments } from '../payments/runtime.js';
+import { simulatedNwcWallet } from '../payments/nwc.js';
+import { startRelay } from '../payments/relay.js';
 import { payOrderTool } from '../payments/tool.js';
 
 /** Everything the server needs for one business, in memory. `payments` comes from createPayments. */
@@ -31,7 +33,8 @@ export function simulatedLightningRoutes(payments) {
 
 function describePayments(payments) {
   const lines = [];
-  if (payments.lightning) lines.push(`  Lightning       ${payments.lightning.simulated ? 'simulated node (no real money)' : 'LND'} on ${payments.lightning.network}, paying ${payments.lightning.payTo.slice(0, 16)}…`);
+  const kinds = { simulated: 'simulated node (no real money)', lnd: 'LND', nwc: 'wallet over Nostr Wallet Connect' };
+  if (payments.lightning) lines.push(`  Lightning       ${kinds[payments.lightning.node.kind] ?? 'node'} on ${payments.lightning.network}, paying ${payments.lightning.payTo.slice(0, 16)}…`);
   for (const c of payments.coins) {
     const method = c.token.transferMethod === 'permit2' ? 'paid with Permit2, ' : '';
     lines.push(`  ${c.symbol.padEnd(16)}${c.token.label}, ${method}${c.simulated ? 'simulated settlement (no real money)' : 'settled by the facilitator'}, paying ${c.payTo}`);
@@ -91,18 +94,36 @@ export default {
     if (!server.listening) return 1;
 
     const shown = `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`;
+
+    // With a simulated node, also run a local relay and a simulated customer wallet,
+    // so the demo agent can pay over Nostr Wallet Connect with a budget.
+    let nwcDemo = null;
+    if (payments?.lightning?.simulated) {
+      const relay = await startRelay();
+      const wallet = await simulatedNwcWallet({ relayUrl: relay.url, pay: (invoice) => payments.lightning.node.pay(invoice), budgetMsat: 50000000n });
+      nwcDemo = { relay, wallet };
+    }
     out([
       `Serving ${project.business.name} (gentifi-toolkit ${VERSION})`,
       `  MCP connector   ${shown}/mcp`,
       `  Scan-to-add     ${shown}/`,
       `  Discovery       ${shown}/.well-known/ard.json`,
       ...(payments ? ['', 'Payments (pay_order):', ...describePayments(payments)] : []),
+      ...(nwcDemo ? [
+        '',
+        'Simulated customer wallet, over Nostr Wallet Connect (budget 50,000 sats, no real money):',
+        `  GENTIFI_PAYER_NWC='${nwcDemo.wallet.uri}'`,
+      ] : []),
       '',
       'Press Ctrl+C to stop.',
     ].join('\n'));
 
     await new Promise((resolve) => {
-      const stop = () => server.close(resolve);
+      const stop = () => {
+        nwcDemo?.wallet.close();
+        nwcDemo?.relay.close();
+        server.close(resolve);
+      };
       process.once('SIGINT', stop);
       process.once('SIGTERM', stop);
     });

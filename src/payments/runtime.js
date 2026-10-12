@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { mcpUrl } from '../lib/project.js';
-import { lndNode, simulatedNode } from './lightning.js';
+import { lndNode, nwcNode, simulatedNode } from './lightning.js';
 import { parseRate } from './quote.js';
 import { fileStore } from './store.js';
 import { LNBTC, USDC, checksumAddress, remoteFacilitator, simulatedEvmFacilitator } from './x402.js';
@@ -21,7 +21,9 @@ import { LNBTC, USDC, checksumAddress, remoteFacilitator, simulatedEvmFacilitato
  *
  * A real Lightning node: "node": { "type": "lnd", "url": "https://127.0.0.1:8080",
  * "macaroonEnv": "GENTIFI_LND_MACAROON", "tlsCert": "/path/to/tls.cert" } with "payTo"
- * set to the node's public key. Secrets stay in environment variables.
+ * set to the node's public key. Or a wallet over Nostr Wallet Connect, such as
+ * Alby Hub: "node": { "type": "nwc", "uriEnv": "GENTIFI_NWC_URI" }, again with
+ * "payTo" set to the wallet's node key. Secrets stay in environment variables.
  */
 
 export const DEFAULT_TIMEOUTS = { lightning: 600, usdc: 300, usdt: 300 };
@@ -40,11 +42,15 @@ export function paymentProblems(payments) {
     if (!LNBTC[lightning.network]) p.push(`payments.lightning.network must be one of: ${Object.keys(LNBTC).join(', ')}`);
     try { parseRate(rates.BTC, 'BTC'); } catch (e) { p.push(e.message); }
     const node = lightning.node;
-    if (node !== 'simulated' && !(node && node.type === 'lnd')) p.push('payments.lightning.node must be "simulated" or { "type": "lnd", … }');
+    if (node !== 'simulated' && !['lnd', 'nwc'].includes(node?.type)) p.push('payments.lightning.node must be "simulated", { "type": "lnd", … } or { "type": "nwc", … }');
     if (node?.type === 'lnd') {
       if (!/^https?:\/\//.test(node.url ?? '')) p.push('payments.lightning.node.url must be the LND REST address');
       if (!node.macaroonEnv) p.push('payments.lightning.node.macaroonEnv must name the environment variable holding an invoice macaroon (hex)');
       if (!/^0[23][0-9a-f]{64}$/.test(lightning.payTo ?? '')) p.push('payments.lightning.payTo must be the node\'s public key (66 hex characters)');
+    }
+    if (node?.type === 'nwc') {
+      if (!node.uriEnv) p.push('payments.lightning.node.uriEnv must name the environment variable holding the wallet\'s Nostr Wallet Connect string');
+      if (!/^0[23][0-9a-f]{64}$/.test(lightning.payTo ?? '')) p.push('payments.lightning.payTo must be the wallet\'s node public key (66 hex characters)');
     }
   }
   if (usdc) {
@@ -88,6 +94,10 @@ export async function createPayments(project, { projectDir = '.', store, simulat
     let node;
     if (simulate || nodeConfig === 'simulated') {
       node = simulatedNode({ network, privateKey: await st.secret('simulated-lightning-key'), now });
+    } else if (nodeConfig.type === 'nwc') {
+      const uri = env[nodeConfig.uriEnv];
+      if (!uri) throw new Error(`Set ${nodeConfig.uriEnv} to the wallet's Nostr Wallet Connect string`);
+      node = nwcNode({ uri, network, payTo: config.lightning.payTo });
     } else {
       const macaroon = env[nodeConfig.macaroonEnv];
       if (!macaroon) throw new Error(`Set ${nodeConfig.macaroonEnv} to the LND invoice macaroon (hex)`);
