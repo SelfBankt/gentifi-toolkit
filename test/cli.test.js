@@ -67,7 +67,7 @@ test('init, build and check work end to end on the demo catalogue', async () => 
 
     io = capture();
     assert.equal(await main(['build', '--project', project, '--out', join(dir, 'dist')], io), 0, io.stderr);
-    assert.deepEqual((await readdir(join(dir, 'dist'))).sort(), ['.well-known', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'index.html', 'mcp']);
+    assert.deepEqual((await readdir(join(dir, 'dist'))).sort(), ['.well-known', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'counter-card.svg', 'index.html', 'mcp', 'signs.html']);
 
     io = capture();
     assert.equal(await main(['check', '--project', project], io), 0, io.stdout);
