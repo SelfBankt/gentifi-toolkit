@@ -61,7 +61,7 @@ export function networkCard(baseUrl, version) {
   };
 }
 
-export function networkTools(businesses, { baseUrl = '' } = {}) {
+export function networkTools(businesses, { baseUrl = '', stats = null } = {}) {
   const findTool = {
     name: 'find_businesses',
     title: 'Find businesses on Gentifi',
@@ -87,8 +87,10 @@ export function networkTools(businesses, { baseUrl = '' } = {}) {
         })
         .filter((r) => !asked.length || r.score > 0)
         .sort((x, y) => y.score - x.score || x.b.name.localeCompare(y.b.name));
+      const shown = results.slice(0, limit);
+      for (const { b } of shown) stats?.count(b.slug, 'searchAppearances');
       return {
-        businesses: results.slice(0, limit).map(({ b, items }) => ({
+        businesses: shown.map(({ b, items }) => ({
           id: b.slug,
           name: b.name,
           kind: b.project.business.kind || undefined,
@@ -117,6 +119,7 @@ export function networkTools(businesses, { baseUrl = '' } = {}) {
     annotations: { ...t.annotations, title: t.annotations.title.replace('the business', 'a business') },
     handler: async ({ business, ...args }, context) => {
       const b = resolveBusiness(businesses, business);
+      stats?.count(b.slug, 'toolCalls');
       const tool = b.tools.find((x) => x.name === t.name);
       const out = await tool.handler(args, context);
       return out && typeof out === 'object' && !(out instanceof ToolResult) && !Array.isArray(out)
@@ -134,7 +137,7 @@ export function networkTools(businesses, { baseUrl = '' } = {}) {
  * search the tools use, with no language model involved, as schema.org
  * objects. Only NLWeb's non-streaming list mode is offered.
  */
-export function nlwebAsk(businesses, { query = '', site, baseUrl = '', limit = 10 } = {}) {
+export function nlwebAsk(businesses, { query = '', site, baseUrl = '', limit = 10, stats = null } = {}) {
   const asked = tokens(query);
   const shops = [...businesses.values()].filter((b) => !site || b.slug === site);
   const results = [];
@@ -175,5 +178,6 @@ export function nlwebAsk(businesses, { query = '', site, baseUrl = '', limit = 1
     }
   }
   results.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name));
+  for (const slug of new Set(results.slice(0, limit).map((r) => r.site))) stats?.count(slug, 'searchAppearances');
   return { query_id: `gentifi-${Date.now().toString(36)}`, query, results: results.slice(0, limit) };
 }

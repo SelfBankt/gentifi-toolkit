@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { createHost } from '../lib/host.js';
+import { createStats } from '../lib/stats.js';
 import { VERSION } from '../lib/version.js';
 
 export default {
@@ -23,7 +24,9 @@ export default {
     const baseUrl = values['base-url'] ?? `http://localhost:${port}`;
     const syncMinutes = Number(values['sync-minutes'] ?? 10);
     const log = (m) => out(`${new Date().toISOString()} ${m}`);
-    const hosted = createHost({ dir: resolve(values.dir), baseUrl, log });
+    // Anonymous daily counts per business, saved every minute to <dir>/<slug>/stats.json
+    const stats = createStats({ dir: resolve(values.dir), log });
+    const hosted = createHost({ dir: resolve(values.dir), baseUrl, log, stats });
     await hosted.scan();
 
     const server = createServer((req, res) => hosted.handle(req, res).catch((e) => {
@@ -51,11 +54,13 @@ export default {
       await hosted.scan();
       if (syncMinutes > 0) await hosted.syncAll();
     }, every);
+    const saving = setInterval(() => stats.flush(), 60000);
 
     await new Promise((done) => {
       const stop = () => {
         clearInterval(timer);
-        server.close(done);
+        clearInterval(saving);
+        server.close(() => stats.flush().then(done));
       };
       process.once('SIGINT', stop);
       process.once('SIGTERM', stop);
