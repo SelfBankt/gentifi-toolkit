@@ -7,7 +7,7 @@ export const TESTED_APPS = ['Claude', 'ChatGPT'];
 /** How a customer adds a connector in each tested app, in plain words. */
 export const ADD_STEPS = {
   Claude: 'Settings → Connectors → Add custom connector. Paste the link.',
-  ChatGPT: 'In a browser, not the app: chatgpt.com/plugins → + → Add custom MCP server. Paste the link, no authentication. Then type @ in a chat to pick the shop.',
+  ChatGPT: 'In a browser, not the app: chatgpt.com/plugins → Add (top right) → Add custom MCP server. Paste the link, no authentication. Then type @ in a chat to pick the shop.',
 };
 
 const list = (apps) => (apps.length === 1 ? apps[0] : `${apps.slice(0, -1).join(', ')} and ${apps.at(-1)}`);
