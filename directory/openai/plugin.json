@@ -1,0 +1,108 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gentifi",
+  "version": "1.0.0",
+  "description": "Ask independent local shops what they have, check prices and opening times, and prepare reservations you confirm yourself.",
+  "author": {
+    "name": "Gentifi",
+    "email": "gentifiai@gmail.com",
+    "url": "https://gentifi.com"
+  },
+  "homepage": "https://gentifi.com/connector",
+  "repository": "https://github.com/SelfBankt/gentifi-toolkit",
+  "license": "Apache-2.0",
+  "keywords": [
+    "local shops",
+    "independent businesses",
+    "farm shops",
+    "bakeries",
+    "reservations"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Gentifi",
+        "shortDescription": "Ask local independent shops what they have",
+        "longDescription": "Gentifi connects you to independent local shops, cafés and makers, starting in Bristol and South Gloucestershire. Ask what a shop has, check prices, stock and opening times, and prepare a reservation or order. Nothing is ordered for you: you see a summary and confirm it with the shop yourself, by email or on the shop's own checkout. Information comes from each shop's own catalogue, which the shop keeps up to date.",
+        "developerName": "Gentifi",
+        "category": "Shopping",
+        "capabilities": [
+          "Find local shops",
+          "Check products, prices and stock",
+          "Check opening times",
+          "Prepare reservations you confirm"
+        ],
+        "websiteURL": "https://gentifi.com",
+        "supportURL": "https://gentifi.com/connector#support",
+        "privacyPolicyURL": "https://gentifi.com/privacy#connector",
+        "defaultPrompt": [
+          "Does Hollow Lane Farm Shop have free-range eggs?",
+          "When is Hollow Lane Farm Shop open?",
+          "Which shops on Gentifi sell sourdough?"
+        ],
+        "brandColor": "#05414D",
+        "brandColorDark": "#F09A5C",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Find a shop by what it sells",
+              "prompt": "Which shops on Gentifi have eggs?",
+              "tools_triggered": "find_businesses",
+              "expected_behavior": "Names Hollow Lane Farm Shop (a fictional demo shop) and its free-range eggs (dozen)."
+            },
+            {
+              "description": "Check a product at a named shop",
+              "prompt": "Does Hollow Lane Farm Shop have free-range eggs?",
+              "tools_triggered": "search_catalogue",
+              "expected_behavior": "Says yes: free-range eggs, £3.20 per box of a dozen, in stock, and when the prices were last updated."
+            },
+            {
+              "description": "Opening hours",
+              "prompt": "When is Hollow Lane Farm Shop open?",
+              "tools_triggered": "get_business_info",
+              "expected_behavior": "Tuesday to Saturday, 9am to 5pm."
+            },
+            {
+              "description": "Check stock for a quantity",
+              "prompt": "Could I get 3 sourdough loaves from Hollow Lane Farm Shop?",
+              "tools_triggered": "check_availability",
+              "expected_behavior": "Says 3 sourdough loaves are available at £4.50 each."
+            },
+            {
+              "description": "Prepare a reservation for the customer to confirm",
+              "prompt": "Reserve a dozen eggs at Hollow Lane Farm Shop for Saturday.",
+              "tools_triggered": "prepare_order",
+              "expected_behavior": "Shows a summary (1 x free-range eggs, total £3.20, Saturday) and an email link the customer can choose to send to the shop. Says nothing has been ordered or sent."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Payment is not supported",
+              "prompt": "Pay Hollow Lane Farm Shop for my eggs with my card."
+            },
+            {
+              "description": "Business not on Gentifi",
+              "prompt": "Find me a plumber in Manchester on Gentifi."
+            },
+            {
+              "description": "Changing a shop's data is not supported",
+              "prompt": "Change the price of eggs at Hollow Lane Farm Shop to £1."
+            }
+          ]
+        },
+        "commerce": true,
+        "commerce_description": "Helps customers reserve or order physical goods from independent shops. Gentifi takes no payments: prepare_order returns a summary, and the customer confirms with the shop themselves by email or on the shop's own checkout website."
+      },
+      "publication": {
+        "countries": [
+          "GB"
+        ],
+        "release_notes": "First release: find independent shops on Gentifi, check their products, prices, stock and opening times, and prepare reservations the customer confirms."
+      }
+    }
+  }
+}

@@ -47,6 +47,9 @@ test('one host serves many businesses, each under /b/<slug>/', async () => {
       assert.equal((await fetch(`${url}/b/hollow-lane`, { redirect: 'manual' })).headers.get('location'), '/b/hollow-lane/');
       assert.equal((await fetch(`${url}/b/nobody/`)).status, 404);
       assert.deepEqual(await (await fetch(`${url}/healthz`)).json(), { ok: true, businesses: 2 });
+      assert.equal((await fetch(`${url}/.well-known/openai-apps-challenge`)).status, 404);
+      await writeFile(join(dir, '.openai-apps-challenge'), 'token-123\n');
+      assert.equal(await (await fetch(`${url}/.well-known/openai-apps-challenge`)).text(), 'token-123', 'the domain check gets the bare token');
 
       const client = new McpHttpClient(`${url}/b/corner-bakery/mcp`);
       await client.connect();
