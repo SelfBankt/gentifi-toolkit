@@ -9,7 +9,7 @@ const json = (project, path) => JSON.parse(files(project).get(path));
 
 test('writes every agent format, and the A2A card only when there is an A2A endpoint', () => {
   assert.deepEqual([...files().keys()].sort(), [
-    '.well-known/ai-catalog.json', '.well-known/ard.json', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'counter-card.svg', 'index.html', 'mcp/server-card.json', 'signs.html',
+    '.well-known/ai-catalog.json', '.well-known/ard.json', 'SKILL.md', 'ard.json', 'badge.svg', 'business.jsonld', 'counter-card.svg', 'index.html', 'mcp/server-card.json', 'signs.html', 'website-snippet.txt',
   ]);
   const withA2a = demoProject({ a2a: { url: 'https://hollowlane.example/a2a' } });
   const card = json(withA2a, '.well-known/agent-card.json');

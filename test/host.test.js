@@ -140,6 +140,14 @@ test('the network connector at /mcp reaches every business by id or name', async
       assert.equal(order.status, 'not_ordered');
       assert.equal(order.business, 'Corner Bakery');
 
+      const ask = await (await fetch(`${url}/ask?query=${encodeURIComponent('free-range eggs')}`)).json();
+      assert.equal(ask.results[0].name, 'Free-range eggs (dozen)');
+      assert.equal(ask.results[0].site, 'hollow-lane');
+      assert.equal(ask.results[0].schema_object.offers.seller.name, 'Hollow Lane Farm Shop');
+      const posted = await (await fetch(`${url}/ask`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'sourdough', site: 'corner-bakery' }) })).json();
+      assert.deepEqual(posted.results.map((r) => r.site), ['corner-bakery']);
+      assert.equal((await fetch(`${url}/ask`)).status, 400);
+
       const missing = await call('get_business_info', { business: 'Nowhere Deli' });
       assert.equal(missing.isError, true);
       assert.match(missing.content[0].text, /No business on Gentifi matches/);

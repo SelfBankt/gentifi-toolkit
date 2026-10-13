@@ -127,3 +127,53 @@ export function networkTools(businesses, { baseUrl = '' } = {}) {
 
   return [findTool, ...shopTools];
 }
+
+/**
+ * An NLWeb-style answer to a natural-language question: GET or POST /ask with
+ * query (and optionally site, a business id). Results come from the same
+ * search the tools use, with no language model involved, as schema.org
+ * objects. Only NLWeb's non-streaming list mode is offered.
+ */
+export function nlwebAsk(businesses, { query = '', site, baseUrl = '', limit = 10 } = {}) {
+  const asked = tokens(query);
+  const shops = [...businesses.values()].filter((b) => !site || b.slug === site);
+  const results = [];
+  for (const b of shops) {
+    const biz = b.project.business;
+    const page = `${baseUrl}/b/${b.slug}/`;
+    const own = asked.filter((w) => words(b).includes(w)).length;
+    if (own) {
+      results.push({
+        url: biz.website || page,
+        name: b.name,
+        site: b.slug,
+        score: own * 3,
+        description: biz.description || [biz.kind, biz.area].filter(Boolean).join(', ') || b.name,
+        schema_object: { '@context': 'https://schema.org', '@type': biz.schemaType || 'LocalBusiness', name: b.name, url: biz.website || page, ...(biz.openingHours?.length ? { openingHours: biz.openingHours } : {}) },
+      });
+    }
+    for (const { item, score } of asked.length ? searchItems(b.project.catalogue.items, query) : []) {
+      results.push({
+        url: item.url || page,
+        name: item.name,
+        site: b.slug,
+        score: score + own,
+        description: `${item.name} at ${b.name}${item.description ? `: ${item.description}` : ''}`,
+        schema_object: {
+          '@context': 'https://schema.org',
+          '@type': item.kind === 'service' ? 'Service' : 'Product',
+          name: item.name,
+          ...(item.category ? { category: item.category } : {}),
+          offers: {
+            '@type': 'Offer',
+            ...(typeof item.price === 'number' ? { price: item.price.toFixed(2), priceCurrency: item.currency || biz.currency || 'GBP' } : {}),
+            ...(typeof item.stock === 'number' ? { availability: item.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock' } : {}),
+            seller: { '@type': biz.schemaType || 'LocalBusiness', name: b.name, url: page },
+          },
+        },
+      });
+    }
+  }
+  results.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name));
+  return { query_id: `gentifi-${Date.now().toString(36)}`, query, results: results.slice(0, limit) };
+}
