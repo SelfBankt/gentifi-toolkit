@@ -47,6 +47,11 @@ test('one host serves many businesses, each under /b/<slug>/', async () => {
       assert.equal((await fetch(`${url}/b/hollow-lane`, { redirect: 'manual' })).headers.get('location'), '/b/hollow-lane/');
       assert.equal((await fetch(`${url}/b/nobody/`)).status, 404);
       assert.deepEqual(await (await fetch(`${url}/healthz`)).json(), { ok: true, businesses: 2 });
+      const card = await (await fetch(`${url}/.well-known/mcp/server-card.json`)).json();
+      assert.equal(card.title, 'Gentifi');
+      assert.equal(card.remotes[0].url, `${url}/mcp`, 'the .well-known card describes the network connector');
+      const cards = await (await fetch(`${url}/.well-known/mcp/server-cards.json`)).json();
+      assert.deepEqual(cards.servers.map((c) => c.remotes[0].url).sort(), [`${url}/b/corner-bakery/mcp`, `${url}/b/hollow-lane/mcp`, `${url}/mcp`]);
       assert.equal((await fetch(`${url}/.well-known/openai-apps-challenge`)).status, 404);
       await writeFile(join(dir, '.openai-apps-challenge'), 'token-123\n');
       assert.equal(await (await fetch(`${url}/.well-known/openai-apps-challenge`)).text(), 'token-123', 'the domain check gets the bare token');

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
-import { NETWORK_INSTRUCTIONS, networkTools } from './network.js';
+import { NETWORK_INSTRUCTIONS, networkCard, networkTools } from './network.js';
 import { VERSION } from './version.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
@@ -34,7 +34,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp`, networkUrl: `${base}/mcp` } };
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`) });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    businesses.set(slug, { slug, path, project, handler, tools: businessTools(hosted), mtimeMs, name: project.business.name });
+    businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted), mtimeMs, name: project.business.name });
   }
 
   const network = createHttpHandler({
@@ -119,6 +119,15 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       return sendText(res, 200, 'Gentifi hosted connectors. Find businesses at https://gentifi.com\n');
     }
     if (url.pathname === '/mcp') return network(req, res);
+    // MCP Server Cards at .well-known (a draft: both the singular and plural paths are in use)
+    if (url.pathname === '/.well-known/mcp/server-card.json' || url.pathname === '/.well-known/mcp/server-cards.json') {
+      const card = networkCard(base, VERSION);
+      const body = url.pathname.endsWith('cards.json')
+        ? { servers: [card, ...[...businesses.values()].map((b) => JSON.parse(b.files.get('mcp/server-card.json')))] }
+        : card;
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
+      return res.end(JSON.stringify(body, null, 2));
+    }
     if (url.pathname === '/.well-known/openai-apps-challenge') {
       // OpenAI's plugin directory checks the domain with a token: put it in <dir>/.openai-apps-challenge
       const token = await readFile(join(dir, '.openai-apps-challenge'), 'utf8').then((t) => t.trim(), () => '');

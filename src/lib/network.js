@@ -1,5 +1,7 @@
 import { businessTools, searchItems, tokens, ToolError } from '../mcp/tools.js';
 import { ToolResult } from '../mcp/results.js';
+import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
+import { SERVER_CARD_SCHEMA } from './outputs.js';
 
 /**
  * The Gentifi network connector: one MCP server that reaches every hosted
@@ -42,6 +44,21 @@ export function resolveBusiness(businesses, ref) {
     throw new ToolError(`More than one business matches "${want}": ${scored.map((s) => `${s.b.name} (id ${s.b.slug})`).join(', ')}. Ask the customer which one.`);
   }
   throw new ToolError(`No business on Gentifi matches "${want}". Use find_businesses to search.`);
+}
+
+/** The network connector's MCP Server Card, so clients can find it before connecting. */
+export function networkCard(baseUrl, version) {
+  const host = new URL(baseUrl).hostname.split('.').reverse().join('.');
+  return {
+    $schema: SERVER_CARD_SCHEMA,
+    name: `${host}/network`,
+    version,
+    title: 'Gentifi',
+    description: 'Independent local businesses: their products, prices, stock, opening times and ordering',
+    websiteUrl: 'https://gentifi.com/connector',
+    remotes: [{ type: 'streamable-http', url: `${baseUrl}/mcp`, supportedProtocolVersions: SUPPORTED_VERSIONS }],
+    _meta: { 'com.gentifi/generator': `gentifi-toolkit ${version}` },
+  };
 }
 
 export function networkTools(businesses, { baseUrl = '' } = {}) {
