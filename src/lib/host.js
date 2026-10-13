@@ -5,6 +5,7 @@ import { createProtocol } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
 import { NETWORK_INSTRUCTIONS, networkCard, networkTools, nlwebAsk } from './network.js';
 import { VERSION } from './version.js';
+import { isBot } from './stats.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
 import { readSource } from './catalogue.js';
@@ -25,14 +26,14 @@ const sendText = (res, status, text, headers = {}) => {
   res.end(text);
 };
 
-export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch }) {
+export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null }) {
   const base = baseUrl.replace(/\/+$/, '');
   const businesses = new Map();
 
   function mount(slug, path, project, mtimeMs) {
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp`, networkUrl: `${base}/mcp` } };
-    const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`) });
+    const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls') });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
     businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted), mtimeMs, name: project.business.name });
   }
@@ -41,7 +42,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     protocol: createProtocol({
       serverInfo: { name: 'gentifi', title: 'Gentifi', version: VERSION },
       instructions: NETWORK_INSTRUCTIONS,
-      tools: networkTools(businesses, { baseUrl: base }),
+      tools: networkTools(businesses, { baseUrl: base, stats }),
       log: (m) => log(`[network] ${m}`),
     }),
     mcpPath: '/mcp',
@@ -136,7 +137,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
         }
       }
       if (!String(params.query ?? '').trim()) return sendText(res, 400, 'Ask with a query, such as /ask?query=sourdough\n', { 'access-control-allow-origin': '*' });
-      const answer = nlwebAsk(businesses, { query: String(params.query), site: params.site, baseUrl: base });
+      const answer = nlwebAsk(businesses, { query: String(params.query), site: params.site, baseUrl: base, stats });
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
       return res.end(JSON.stringify(answer));
     }
@@ -158,6 +159,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const business = m && businesses.get(m[1]);
     if (!business) return sendText(res, 404, 'No business here.\n');
     if (!m[2]) return sendText(res, 301, '', { location: `/b/${m[1]}/${url.search}` });
+    if ((m[2] === '/' || m[2] === '/index.html') && req.method === 'GET' && !isBot(req.headers['user-agent'])) stats?.count(business.slug, 'pageViews');
     req.url = `${m[2]}${url.search}`;
     return business.handler(req, res);
   }

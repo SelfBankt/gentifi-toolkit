@@ -12,8 +12,9 @@ import { startRelay } from '../payments/relay.js';
 import { payOrderTool } from '../payments/tool.js';
 
 /** Everything the server needs for one business, in memory. `payments` comes from createPayments. */
-export function businessServer(project, { log = () => {}, payments = null } = {}) {
-  const tools = [...businessTools(project), ...(payments ? [payOrderTool(project, payments)] : [])];
+export function businessServer(project, { log = () => {}, payments = null, onToolCall = null } = {}) {
+  let tools = [...businessTools(project), ...(payments ? [payOrderTool(project, payments)] : [])];
+  if (onToolCall) tools = tools.map((t) => ({ ...t, handler: (args, context) => { onToolCall(t.name); return t.handler(args, context); } }));
   const protocol = createProtocol({
     serverInfo: serverInfo(project, VERSION),
     instructions: serverInstructions(project),

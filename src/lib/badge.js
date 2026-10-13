@@ -25,6 +25,9 @@ const MARK = (color, width) => `<path d="M73 37.48 A26 26 0 1 0 73 82.52" fill="
   + `<path d="M92.53 27.47 A46 46 0 1 0 106 60 L64 60" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`
   + `<circle cx="60" cy="60" r="10" fill="${color}"/>`;
 
+/** The Gentifi mark on its own, for pages and reports. */
+export const markSvg = (color, size = 28) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="${size}" height="${size}" aria-hidden="true">${MARK(color, 10)}</svg>`;
+
 /**
  * The window sticker: Gentifi mark and wordmark, "Agent-ready business", and a
  * scannable code for the business's own link. 1000 x 1000 units, prints at any size.

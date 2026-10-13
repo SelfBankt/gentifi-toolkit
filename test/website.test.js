@@ -86,3 +86,18 @@ test('a company-only Organization block is flagged, with its missing address and
   assert.match(text, /warn: No address/);
   assert.match(text, /warn: No opening hours/);
 });
+
+test('--check --name --report works for a business not on Gentifi yet', async () => {
+  await withTempDir(async (dir) => {
+    const report = join(dir, 'report.html');
+    const lines = [];
+    const fetchImpl = async (url) => ({ ok: true, text: async () => (String(url).endsWith('/robots.txt') ? '' : page({ '@type': 'Organization', name: 'Corner Bakery' })) });
+    const code = await website.run({ check: 'https://cornerbakery.example', name: 'Corner Bakery', report, project: join(dir, 'missing.json') }, { out: (l) => lines.push(l), err: (l) => lines.push(l), fetchImpl });
+    assert.equal(code, 0);
+    const html = await (await import('node:fs/promises')).readFile(report, 'utf8');
+    assert.match(html, /How AI sees Corner Bakery/);
+    assert.match(html, /describes a company \(Organization\), not a shop/);
+    assert.match(html, /Google Business Profile/);
+    assert.doesNotMatch(html, /\bfree\b|£|per month/i, 'no pricing in the report');
+  });
+});

@@ -52,6 +52,8 @@ gentifi publish --self-host <dir>   # lay out the files for your own web server
 gentifi host --dir <folder> --base-url <url>   # host many businesses from one server
 gentifi check --url <link>      # test a published business, the way an agent would
 gentifi website [--check <url>] # snippet for the business's own site, or check what's there
+gentifi website --check <url> --name "…" --report <file.html>   # one-page AI visibility report for a prospect
+gentifi stats --dir <folder>    # how often each hosted business was opened, asked about and found
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 gentifi payments [--demo]       # agent payments by Lightning, USDC or USDT (prototype)
 ```
@@ -102,6 +104,10 @@ For bakeries and food shops, `examples/bakery-template.csv` adds allergens, diet
 ## The business's own website
 
 Search engines and AI search mostly trust a business's own site, so `gentifi website` prints a snippet to paste once into its `<head>`: schema.org `LocalBusiness` data with the details that rarely change (name, address, hours, contact) and a link to the Gentifi page for products and prices, so it never goes stale when a price changes. `gentifi website --check https://their-site.example` reports what the site says today: missing or company-only markup, a name, phone number, postcode or hours that differ from Gentifi, a `robots.txt` that blocks Google, Bing, ChatGPT, Claude or Perplexity search, and what to check by hand on the Google Business Profile.
+
+For a business that isn't on Gentifi yet, give its name instead of a project: `gentifi website --check https://their-site.example --name "Their Shop" --report report.html` writes a one-page "How AI sees your business" report to send before a first conversation. It states only what the check found; print it or save it as a PDF from a browser.
+
+`gentifi host` also keeps anonymous daily counts for each business in `<dir>/<slug>/stats.json`: page opens by people (not crawlers or link previews), questions from AI tools, and appearances in searches. Only numbers are kept, never who, from where or what was asked. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses
 
