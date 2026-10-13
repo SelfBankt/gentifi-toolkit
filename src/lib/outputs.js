@@ -281,7 +281,13 @@ export function landingPage(project, payees = []) {
   const method = project.ordering?.method;
   const action = method === 'booking' ? 'book' : method === 'quote' ? 'ask for a quote' : method === 'checkout' ? 'order' : 'reserve something';
   const firstItem = project.catalogue.items[0]?.name;
-  const example = firstItem ? `“Have they got ${firstItem.replace(/\s*\(.*\)$/, '').toLowerCase()}?”` : '“What do they have today?”';
+  // On a Gentifi host, customers add the one network connector, so questions name the business
+  const network = project.publish?.networkUrl;
+  const addLink = network || connector;
+  const thing = firstItem?.replace(/\s*\(.*\)$/, '').toLowerCase();
+  const example = network
+    ? `${thing ? `“Does ${b.name} have ${thing}?”` : `“What does ${b.name} have today?”`} or “When is ${b.name} open?”`
+    : `${thing ? `“Have they got ${thing}?”` : '“What do they have today?”'} or “When are they open?”`;
   // Web addresses in the steps, such as chatgpt.com/plugins, become links a phone can open
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
   const appSteps = TESTED_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
@@ -337,14 +343,14 @@ export function landingPage(project, payees = []) {
     <h1>Add ${e(b.name)} to your AI assistant</h1>
     <p class="lede">Then ask it what they have, prices and opening times, or to ${action}. You approve the connection, and every order, yourself.</p>
     <ol class="steps">
-      <li>Copy this link.
+      <li>${network ? `Copy the Gentifi link. It includes ${e(b.name)}.` : 'Copy this link.'}
         <div class="connector">
-          <code id="connector">${e(connector)}</code>
-          <button type="button" data-copy="${e(connector)}">Copy</button>
+          <code id="connector">${e(addLink)}</code>
+          <button type="button" data-copy="${e(addLink)}">Copy</button>
         </div>
       </li>
       <li><ul>${appSteps}</ul></li>
-      <li>Ask, for example: ${e(example)} or “When are they open?”</li>
+      <li>Ask, for example: ${e(example)}</li>
     </ol>
     <p class="approve">Using another AI app? Paste the link wherever it lets you add connectors (sometimes called MCP servers). Your app asks you to approve it, and nothing is added silently.</p>
   </div>

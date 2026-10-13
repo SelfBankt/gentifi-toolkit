@@ -31,7 +31,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
 
   function mount(slug, path, project, mtimeMs) {
     // Hosted URLs replace whatever the project says, so its files point here
-    const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp` } };
+    const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp`, networkUrl: `${base}/mcp` } };
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`) });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
     businesses.set(slug, { slug, path, project, handler, tools: businessTools(hosted), mtimeMs, name: project.business.name });
