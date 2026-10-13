@@ -95,3 +95,45 @@ test('the host re-reads each business sheet, keeps the last good catalogue, and 
     }
   });
 });
+
+test('the network connector at /mcp reaches every business by id or name', async () => {
+  await withTempDir(async (dir) => {
+    for (const [slug, name, item] of [['hollow-lane', 'Hollow Lane Farm Shop', 'Free-range eggs (dozen)'], ['corner-bakery', 'Corner Bakery', 'Sourdough loaf']]) {
+      await mkdir(join(dir, slug));
+      const project = demoProject();
+      project.business.name = name;
+      project.catalogue.items = [{ ...project.catalogue.items[0], sku: 'ITEM-1', name: item, category: '', description: '', price: 3.2, stock: 10 }];
+      await saveProject(join(dir, slug, 'gentifi.json'), project);
+    }
+    let host;
+    const { server, url } = await listen((req, res) => host.handle(req, res));
+    try {
+      host = createHost({ dir, baseUrl: url });
+      await host.scan();
+      const client = new McpHttpClient(`${url}/mcp`);
+      await client.connect();
+      const { tools } = await client.request('tools/list', {});
+      assert.deepEqual(tools.map((t) => t.name), ['find_businesses', 'get_business_info', 'search_catalogue', 'check_availability', 'prepare_order']);
+      assert.ok(tools.find((t) => t.name === 'prepare_order').inputSchema.required.includes('business'));
+
+      const call = async (name, args) => (await client.request('tools/call', { name, arguments: args }));
+      const found = (await call('find_businesses', { query: 'eggs' })).structuredContent;
+      assert.deepEqual(found.businesses.map((b) => b.id), ['hollow-lane']);
+      assert.deepEqual(found.businesses[0].matchingItems, ['Free-range eggs (dozen)']);
+      assert.equal((await call('find_businesses', {})).structuredContent.total, 2);
+
+      const search = (await call('search_catalogue', { business: 'Hollow Lane Farm', query: 'eggs' })).structuredContent;
+      assert.equal(search.business, 'Hollow Lane Farm Shop');
+      assert.equal(search.items[0].name, 'Free-range eggs (dozen)');
+      const order = (await call('prepare_order', { business: 'corner-bakery', items: [{ sku: 'ITEM-1', quantity: 2 }] })).structuredContent;
+      assert.equal(order.status, 'not_ordered');
+      assert.equal(order.business, 'Corner Bakery');
+
+      const missing = await call('get_business_info', { business: 'Nowhere Deli' });
+      assert.equal(missing.isError, true);
+      assert.match(missing.content[0].text, /No business on Gentifi matches/);
+    } finally {
+      server.close();
+    }
+  });
+});
