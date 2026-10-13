@@ -1,6 +1,10 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
+import { createProtocol } from '../mcp/protocol.js';
+import { businessTools } from '../mcp/tools.js';
+import { NETWORK_INSTRUCTIONS, networkTools } from './network.js';
+import { VERSION } from './version.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
 import { readSource } from './catalogue.js';
@@ -10,7 +14,8 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * Hosts many businesses from one process. Each business is a folder in `dir`
  * named by its slug, holding its gentifi.json, and is served under
  * `${baseUrl}/b/<slug>/`: the scan-to-add page, discovery files, SKILL.md and
- * the MCP connector at `/b/<slug>/mcp`.
+ * the MCP connector at `/b/<slug>/mcp`. The network connector at `/mcp`
+ * reaches every business at once.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -29,8 +34,19 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp` } };
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`) });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    businesses.set(slug, { slug, path, project, handler, mtimeMs, name: project.business.name });
+    businesses.set(slug, { slug, path, project, handler, tools: businessTools(hosted), mtimeMs, name: project.business.name });
   }
+
+  const network = createHttpHandler({
+    protocol: createProtocol({
+      serverInfo: { name: 'gentifi', title: 'Gentifi', version: VERSION },
+      instructions: NETWORK_INSTRUCTIONS,
+      tools: networkTools(businesses, { baseUrl: base }),
+      log: (m) => log(`[network] ${m}`),
+    }),
+    mcpPath: '/mcp',
+    log: (m) => log(`[network] ${m}`),
+  });
 
   /** Loads new or changed businesses and drops removed ones. One broken business never stops the others. */
   async function scan() {
@@ -102,6 +118,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (url.pathname === '/' || url.pathname === '') {
       return sendText(res, 200, 'Gentifi hosted connectors. Find businesses at https://gentifi.com\n');
     }
+    if (url.pathname === '/mcp') return network(req, res);
     const m = /^\/b\/([^/]+)(\/.*)?$/.exec(url.pathname);
     const business = m && businesses.get(m[1]);
     if (!business) return sendText(res, 404, 'No business here.\n');
