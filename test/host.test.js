@@ -38,7 +38,10 @@ test('one host serves many businesses, each under /b/<slug>/', async () => {
 
       const page = await fetch(`${url}/b/corner-bakery/`);
       assert.equal(page.status, 200);
-      assert.match(await page.text(), /Corner Bakery/);
+      const html = await page.text();
+      assert.match(html, /Corner Bakery/);
+      assert.match(html, new RegExp(`data-copy="${url}/mcp"`), 'hosted scan pages give the one network connector');
+      assert.match(html, /Does Corner Bakery have /);
       const ard = await (await fetch(`${url}/b/hollow-lane/.well-known/ard.json`)).json();
       assert.match(JSON.stringify(ard), new RegExp(`${url}/b/hollow-lane/mcp`));
       assert.equal((await fetch(`${url}/b/hollow-lane`, { redirect: 'manual' })).headers.get('location'), '/b/hollow-lane/');
