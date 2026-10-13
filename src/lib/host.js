@@ -6,6 +6,8 @@ import { businessTools } from '../mcp/tools.js';
 import { NETWORK_INSTRUCTIONS, networkCard, networkTools, nlwebAsk } from './network.js';
 import { VERSION } from './version.js';
 import { isBot } from './stats.js';
+import { eventCard, eventCollection, eventInstructions, eventPage, loadEvents, memberView } from './events.js';
+import { badgeSvg, counterCardSvg, signsHtml } from './badge.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
 import { readSource } from './catalogue.js';
@@ -36,6 +38,29 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls') });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
     businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted), mtimeMs, name: project.business.name });
+  }
+
+  // Markets, shows and high streets: each gets its own connector, limited to its members
+  let events = new Map();
+  async function loadAllEvents() {
+    const loaded = await loadEvents(dir, log);
+    for (const event of loaded.values()) {
+      const members = memberView(businesses, event.members);
+      event.handler = createHttpHandler({
+        protocol: createProtocol({
+          serverInfo: { name: `gentifi-${event.slug}`, title: event.name, version: VERSION },
+          instructions: eventInstructions(event),
+          tools: networkTools(members, { baseUrl: base, stats }),
+          log: (m) => log(`[event ${event.slug}] ${m}`),
+        }),
+        mcpPath: '/mcp',
+        log: (m) => log(`[event ${event.slug}] ${m}`),
+      });
+      event.memberShops = members;
+      const missing = event.members.filter((m) => !businesses.has(m));
+      if (missing.length) log(`Event ${event.slug}: not hosted yet: ${missing.join(', ')}`);
+    }
+    events = loaded;
   }
 
   const network = createHttpHandler({
@@ -84,6 +109,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
         log(`Removed ${slug}`);
       }
     }
+    await loadAllEvents();
   }
 
   /** Re-reads each business's online sheet and saves any changes. */
@@ -107,6 +133,37 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       } catch (e) {
         log(`[${b.slug}] Sync failed: ${e.message}`);
       }
+    }
+  }
+
+  function handleEvent(slug, rest, req, res, url) {
+    const event = events.get(slug);
+    if (!event) return sendText(res, 404, 'No market, show or high street here.\n');
+    if (!rest) return sendText(res, 301, '', { location: `/c/${slug}/${url.search}` });
+    const members = [...event.memberShops.values()];
+    const page = `${base}/c/${slug}/`;
+    const link = event.shortUrl || page;
+    const send = (type, body) => {
+      res.writeHead(200, { 'content-type': type, 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
+      res.end(body);
+    };
+    switch (rest) {
+      case '/':
+      case '/index.html':
+        return send('text/html; charset=utf-8', eventPage(event, members, base));
+      case '/collection.json':
+        return send('application/ai-collection+json', JSON.stringify(eventCollection(event, members, base), null, 2));
+      case '/mcp/server-card.json':
+        return send('application/mcp-server-card+json', JSON.stringify(eventCard(event, base, VERSION), null, 2));
+      case '/badge.svg':
+        return send('image/svg+xml', badgeSvg({ businessName: event.name, link }));
+      case '/counter-card.svg':
+        return send('image/svg+xml', counterCardSvg({ businessName: event.name, link }));
+      case '/signs.html':
+        return send('text/html; charset=utf-8', signsHtml({ businessName: event.name, link }));
+      default:
+        req.url = `${rest}${url.search}`;
+        return event.handler(req, res);
     }
   }
 
@@ -145,7 +202,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (url.pathname === '/.well-known/mcp/server-card.json' || url.pathname === '/.well-known/mcp/server-cards.json') {
       const card = networkCard(base, VERSION);
       const body = url.pathname.endsWith('cards.json')
-        ? { servers: [card, ...[...businesses.values()].map((b) => JSON.parse(b.files.get('mcp/server-card.json')))] }
+        ? { servers: [card, ...[...events.values()].map((ev) => eventCard(ev, base, VERSION)), ...[...businesses.values()].map((b) => JSON.parse(b.files.get('mcp/server-card.json')))] }
         : card;
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
       return res.end(JSON.stringify(body, null, 2));
@@ -155,6 +212,8 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       const token = await readFile(join(dir, '.openai-apps-challenge'), 'utf8').then((t) => t.trim(), () => '');
       return token ? sendText(res, 200, token) : sendText(res, 404, 'No challenge set.\n');
     }
+    const c = /^\/c\/([^/]+)(\/.*)?$/.exec(url.pathname);
+    if (c) return handleEvent(c[1], c[2], req, res, url);
     const m = /^\/b\/([^/]+)(\/.*)?$/.exec(url.pathname);
     const business = m && businesses.get(m[1]);
     if (!business) return sendText(res, 404, 'No business here.\n');
@@ -164,5 +223,5 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     return business.handler(req, res);
   }
 
-  return { scan, syncAll, handle, businesses, baseUrl: base };
+  return { scan, syncAll, handle, businesses, get events() { return events; }, baseUrl: base };
 }
