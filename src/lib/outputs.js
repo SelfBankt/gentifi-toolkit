@@ -284,7 +284,7 @@ export function landingPage(project, payees = []) {
   const example = firstItem ? `“Have they got ${firstItem.replace(/\s*\(.*\)$/, '').toLowerCase()}?”` : '“What do they have today?”';
   // Web addresses in the steps, such as chatgpt.com/plugins, become links a phone can open
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
-  const appSteps = TESTED_APPS.map((app) => `<li>${linked(ADD_STEPS[app]).replace(`In ${e(app)}`, `<strong>In ${e(app)}</strong>`)}</li>`).join('');
+  const appSteps = TESTED_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
 
   return `<!doctype html>
 <html lang="en-GB">
