@@ -2,6 +2,7 @@ import { ADD_STEPS, TESTED_APPS } from './apps.js';
 import { badgeSvg, counterCardSvg, escapeXml, signsHtml } from './badge.js';
 import { baseUrl, describePrice, humanHours, inStock, mcpUrl, publisherHost } from './project.js';
 import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
+import { websiteSnippet } from './website.js';
 import { businessTools } from '../mcp/tools.js';
 
 export const ARD_CONTEXT = 'https://agenticresourcediscovery.org/context/v1';
@@ -429,6 +430,8 @@ export function generateOutputs(project, toolkitVersion, { payees = [] } = {}) {
     ['mcp/server-card.json', json(serverCard(project, toolkitVersion))],
     ['SKILL.md', skillMd(project, toolkitVersion, payees)],
     ['business.jsonld', json(jsonLd(project, payees))],
+    // For the business's own website: paste once into its <head>
+    ['website-snippet.txt', `${websiteSnippet(project)}\n`],
     ['badge.svg', badgeSvg({ businessName: project.business.name, link: signLink(project) })],
     ['counter-card.svg', counterCardSvg({ businessName: project.business.name, link: signLink(project) })],
     ['signs.html', signsHtml({ businessName: project.business.name, link: signLink(project) })],

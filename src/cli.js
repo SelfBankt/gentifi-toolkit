@@ -8,9 +8,10 @@ import publish from './commands/publish.js';
 import collection from './commands/collection.js';
 import payments from './commands/payments.js';
 import host from './commands/host.js';
+import website from './commands/website.js';
 import { VERSION } from './lib/version.js';
 
-export const commands = { init, sync, build, check, serve, publish, host, payments, collection };
+export const commands = { init, sync, build, check, website, serve, publish, host, payments, collection };
 
 export function helpText() {
   const width = Math.max(...Object.keys(commands).map((n) => n.length));
