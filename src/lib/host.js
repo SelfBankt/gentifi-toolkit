@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
@@ -119,6 +119,11 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       return sendText(res, 200, 'Gentifi hosted connectors. Find businesses at https://gentifi.com\n');
     }
     if (url.pathname === '/mcp') return network(req, res);
+    if (url.pathname === '/.well-known/openai-apps-challenge') {
+      // OpenAI's plugin directory checks the domain with a token: put it in <dir>/.openai-apps-challenge
+      const token = await readFile(join(dir, '.openai-apps-challenge'), 'utf8').then((t) => t.trim(), () => '');
+      return token ? sendText(res, 200, token) : sendText(res, 404, 'No challenge set.\n');
+    }
     const m = /^\/b\/([^/]+)(\/.*)?$/.exec(url.pathname);
     const business = m && businesses.get(m[1]);
     if (!business) return sendText(res, 404, 'No business here.\n');
