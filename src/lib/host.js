@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
 import { businessTools } from '../mcp/tools.js';
-import { NETWORK_INSTRUCTIONS, networkCard, networkTools } from './network.js';
+import { NETWORK_INSTRUCTIONS, networkCard, networkTools, nlwebAsk } from './network.js';
 import { VERSION } from './version.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
@@ -119,6 +119,27 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       return sendText(res, 200, 'Gentifi hosted connectors. Find businesses at https://gentifi.com\n');
     }
     if (url.pathname === '/mcp') return network(req, res);
+    if (url.pathname === '/ask') {
+      // NLWeb-style natural-language search over every hosted business (non-streaming list mode)
+      let params = Object.fromEntries(url.searchParams);
+      if (req.method === 'POST') {
+        const body = await new Promise((ok, fail) => {
+          let data = '';
+          req.on('data', (c) => { data += c; if (data.length > 10000) req.destroy(); });
+          req.on('end', () => ok(data));
+          req.on('error', fail);
+        });
+        try {
+          params = { ...params, ...(/json/i.test(req.headers['content-type'] ?? '') ? JSON.parse(body || '{}') : Object.fromEntries(new URLSearchParams(body))) };
+        } catch {
+          return sendText(res, 400, 'The request body must be JSON or a form.\n');
+        }
+      }
+      if (!String(params.query ?? '').trim()) return sendText(res, 400, 'Ask with a query, such as /ask?query=sourdough\n', { 'access-control-allow-origin': '*' });
+      const answer = nlwebAsk(businesses, { query: String(params.query), site: params.site, baseUrl: base });
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
+      return res.end(JSON.stringify(answer));
+    }
     // MCP Server Cards at .well-known (a draft: both the singular and plural paths are in use)
     if (url.pathname === '/.well-known/mcp/server-card.json' || url.pathname === '/.well-known/mcp/server-cards.json') {
       const card = networkCard(base, VERSION);

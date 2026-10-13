@@ -51,6 +51,7 @@ gentifi serve                   # run the MCP connector (HTTP, or --stdio)
 gentifi publish --self-host <dir>   # lay out the files for your own web server
 gentifi host --dir <folder> --base-url <url>   # host many businesses from one server
 gentifi check --url <link>      # test a published business, the way an agent would
+gentifi website [--check <url>] # snippet for the business's own site, or check what's there
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 gentifi payments [--demo]       # agent payments by Lightning, USDC or USDT (prototype)
 ```
@@ -85,6 +86,7 @@ Rows without a name or a usable price are skipped and reported, never guessed. F
 | `mcp/server-card.json` | Where and how to connect, before connecting | [MCP Server Cards](https://modelcontextprotocol.io/seps/2127-mcp-server-cards) v1 |
 | `SKILL.md` | Instructions and a catalogue snapshot for headless agents | [Agent Skills](https://agentskills.io) |
 | `business.jsonld` | The business and its offers for search engines and AI search | [schema.org](https://schema.org) |
+| `website-snippet.txt` | For the business's own website: paste once into its `<head>` (also `gentifi website`) | [schema.org](https://schema.org), ARD |
 | `index.html` | The scan-to-add page the badge opens | |
 | `badge.svg` | Window sticker with a scannable "add to your agent" code | |
 | `.well-known/agent-card.json` | Only when the business runs an A2A endpoint (`a2a.url` in gentifi.json) | [A2A](https://a2a-protocol.org) 1.0 |
@@ -97,6 +99,10 @@ A UCP profile is planned for businesses with an online checkout that implements 
 
 For bakeries and food shops, `examples/bakery-template.csv` adds allergens, dietary notes and pre-order notice. Agents get allergens exactly as given, and are told never to assume an item is free from anything when none are listed.
 
+## The business's own website
+
+Search engines and AI search mostly trust a business's own site, so `gentifi website` prints a snippet to paste once into its `<head>`: schema.org `LocalBusiness` data with the details that rarely change (name, address, hours, contact) and a link to the Gentifi page for products and prices, so it never goes stale when a price changes. `gentifi website --check https://their-site.example` reports what the site says today: missing or company-only markup, a name, phone number, postcode or hours that differ from Gentifi, a `robots.txt` that blocks Google, Bing, ChatGPT, Claude or Perplexity search, and what to check by hand on the Google Business Profile.
+
 ## Hosting many businesses
 
 `gentifi host` serves every business in a folder from one process: each sub-folder is a business, named by its slug and holding its `gentifi.json`.
@@ -105,7 +111,13 @@ For bakeries and food shops, `examples/bakery-template.csv` adds allergens, diet
 gentifi host --dir ./businesses --base-url https://mcp.gentifi.com
 ```
 
-Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and its connector at `/b/<slug>/mcp`. Every 10 minutes (`--sync-minutes`) the host re-reads each business's published Google Sheet and picks up new or changed folders. A sheet that comes back empty or broken never replaces the last good catalogue, and one broken business never stops the others. `/healthz` reports how many businesses are live.
+Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and its connector at `/b/<slug>/mcp`. The host also serves, across every business:
+
+- `/mcp`: the network connector. Customers add it once to reach every business; `find_businesses` finds them and the other tools take a business id or name.
+- `/.well-known/mcp/server-card.json` (the network connector) and `/.well-known/mcp/server-cards.json` (it, then every business's own card).
+- `/ask?query=…`: NLWeb-style natural-language search over every business's products, answered from the catalogues with no language model (non-streaming list mode; add `site=<slug>` for one business).
+- `/.well-known/openai-apps-challenge`: the token in `<dir>/.openai-apps-challenge`, for ChatGPT's plugin directory.
+ Every 10 minutes (`--sync-minutes`) the host re-reads each business's published Google Sheet and picks up new or changed folders. A sheet that comes back empty or broken never replaces the last good catalogue, and one broken business never stops the others. `/healthz` reports how many businesses are live.
 
 `deploy/` sets this up on an Ubuntu or Debian VPS: `setup-vps.sh` installs Node.js and Caddy (which handles HTTPS), and runs the host as a locked-down systemd service.
 
