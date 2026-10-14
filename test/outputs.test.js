@@ -135,3 +135,15 @@ test('printed signs use the short link when there is one, and a bakery sheet car
   assert.match(skill, /Order 3 days ahead/);
   assert.match(skill, /never assume it is free from anything/);
 });
+
+test('on the network connector, the scan page asks about the business by name, with copy and open links', () => {
+  const project = demoProject();
+  project.publish = { ...project.publish, networkUrl: 'https://mcp.gentifi.com/mcp' };
+  const page = files(project).get('index.html');
+  assert.match(page, /Copy the Gentifi link\. It includes Hollow Lane Farm Shop\./);
+  assert.match(page, /“Using Gentifi, does Hollow Lane Farm Shop have free-range eggs\?”/);
+  assert.match(page, /data-copy="Using Gentifi, does Hollow Lane Farm Shop have free-range eggs\?">Copy question</);
+  assert.match(page, /href="https:\/\/claude\.ai\/new\?q=Using%20Gentifi%2C%20does%20Hollow%20Lane%20Farm%20Shop%20have%20free-range%20eggs%3F">Open Claude</);
+  assert.match(page, /href="https:\/\/chatgpt\.com\/\?q=Using%20Gentifi%2C/);
+  assert.doesNotMatch(page, /Have they got/, 'questions name the business when the connector covers every business');
+});
