@@ -1,4 +1,4 @@
-import { ADD_STEPS, TESTED_APPS } from './apps.js';
+import { ADD_STEPS, ASK_LINKS, TESTED_APPS } from './apps.js';
 import { badgeSvg, counterCardSvg, escapeXml, signsHtml } from './badge.js';
 import { baseUrl, describePrice, humanHours, inStock, mcpUrl, publisherHost } from './project.js';
 import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
@@ -286,9 +286,19 @@ export function landingPage(project, payees = []) {
   const network = project.publish?.networkUrl;
   const addLink = network || connector;
   const thing = firstItem?.replace(/\s*\(.*\)$/, '').toLowerCase();
-  const example = network
-    ? `${thing ? `“Does ${b.name} have ${thing}?”` : `“What does ${b.name} have today?”`} or “When is ${b.name} open?”`
-    : `${thing ? `“Have they got ${thing}?”` : '“What do they have today?”'} or “When are they open?”`;
+  const example = `${thing ? `“Have they got ${thing}?”` : '“What do they have today?”'} or “When are they open?”`;
+  // The network connector doesn't know which sign was scanned, so the first question names the business
+  const question = `Using Gentifi, ${thing ? `does ${b.name} have ${thing}?` : `what does ${b.name} have today?`}`;
+  const askLinks = TESTED_APPS.filter((app) => ASK_LINKS[app])
+    .map((app) => `<a class="open" href="${e(ASK_LINKS[app](question))}">Open ${e(app)}</a>`).join('');
+  const askStep = network
+    ? `<li>Then ask about ${e(b.name)} by name, for example:
+        <div class="ask">
+          <p class="question">“${e(question)}”</p>
+          <div class="ask-actions"><button type="button" data-copy="${e(question)}">Copy question</button>${askLinks}</div>
+        </div>
+      </li>`
+    : `<li>Ask, for example: ${e(example)}</li>`;
   // Web addresses in the steps, such as chatgpt.com/plugins, become links a phone can open
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
   const appSteps = TESTED_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
@@ -334,6 +344,11 @@ export function landingPage(project, payees = []) {
   dt { font-weight: 600; margin-top: 10px; }
   footer { background: var(--teal); color: var(--muted); padding: 24px 0 32px; font-size: .85rem; }
   footer a { color: #fff; }
+  .ask { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .question { margin: 0 0 10px; color: #fff; font-weight: 600; }
+  .ask-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ask-actions button { border-radius: 999px; min-height: 40px; }
+  .steps a.open { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
   :focus-visible { outline: 3px solid var(--copper); outline-offset: 2px; }
 </style>
 </head>
@@ -351,7 +366,7 @@ export function landingPage(project, payees = []) {
         </div>
       </li>
       <li><ul>${appSteps}</ul></li>
-      <li>Ask, for example: ${e(example)}</li>
+      ${askStep}
     </ol>
     <p class="approve">Using another AI app? Paste the link wherever it lets you add connectors (sometimes called MCP servers). Your app asks you to approve it, and nothing is added silently.</p>
   </div>
@@ -399,12 +414,12 @@ export function landingPage(project, payees = []) {
   <div class="shell">Made agent-ready with the open-source <a href="https://github.com/SelfBankt/gentifi-toolkit">Gentifi Toolkit</a>.</div>
 </footer>
 <script>
-  document.querySelector('[data-copy]')?.addEventListener('click', async (ev) => {
-    const b = ev.currentTarget;
+  document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    const label = b.textContent;
     try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; }
-    catch { b.textContent = 'Select the link'; }
-    setTimeout(() => { b.textContent = 'Copy'; }, 2000);
-  });
+    catch { b.textContent = 'Select the text'; }
+    setTimeout(() => { b.textContent = label; }, 2000);
+  }));
 </script>
 </body>
 </html>
