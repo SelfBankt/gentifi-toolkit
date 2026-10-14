@@ -63,6 +63,15 @@ function centredText(text, { y, size, fill, weight = 400, font = SANS, maxWidth 
 }
 
 /**
+ * The Gentifi connector covers every business, so the card tells customers to ask by name.
+ * Long names fall back to a shorter line so the text isn't squeezed.
+ */
+function askLine(businessName) {
+  const question = `Then ask: “What has ${businessName} got today?”`;
+  return question.length <= 56 ? question : 'Then ask your AI about us by name.';
+}
+
+/**
  * The counter card for the till: A6 portrait (105 x 148 mm), white, with a large
  * scannable code. 1050 x 1480 units, ten to the millimetre.
  */
@@ -81,7 +90,7 @@ ${centredText('Ask your AI about us', { y: 320, size: 84, weight: 700, fill: TEA
 ${centredText('Scan to add', { y: 410, size: 42, fill: TEAL })}
 ${centredText(businessName, { y: 468, size: 48, weight: 700, fill: TEAL })}
 ${centredText('to your AI assistant.', { y: 526, size: 42, fill: TEAL })}
-${centredText('Then ask what we have, prices or opening times.', { y: 584, size: 34, fill: '#3D4A5C' })}
+${centredText(askLine(businessName), { y: 584, size: 34, fill: '#3D4A5C' })}
 <rect x="225" y="640" width="600" height="600" rx="44" fill="${TEAL}"/>
 <rect x="245" y="660" width="560" height="560" rx="28" fill="${WHITE}"/>
 <svg x="265" y="680" width="520" height="520" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path fill="${TEAL}" d="${qrPath(qr)}"/></svg>

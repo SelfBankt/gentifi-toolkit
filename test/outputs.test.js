@@ -98,6 +98,7 @@ test('the badge carries the business link and the brand', () => {
   assert.match(svg, />Works in Claude and ChatGPT today</);
   const card = files().get('counter-card.svg');
   assert.match(card, />Ask your AI about us</);
+  assert.match(card, />Then ask: “What has Hollow Lane Farm Shop got today\?”</);
   assert.match(card, />Works in Claude and ChatGPT today</);
   assert.doesNotMatch(card, /on Gentifi"|Hermes|any agent/, 'signs only promise apps we have tested');
   const page = files().get('index.html');
@@ -134,6 +135,11 @@ test('printed signs use the short link when there is one, and a bakery sheet car
   const skill = files(shop).get('SKILL.md');
   assert.match(skill, /Order 3 days ahead/);
   assert.match(skill, /never assume it is free from anything/);
+});
+
+test('the counter card falls back to a shorter ask line for a long business name', () => {
+  const card = files(demoProject({ business: { name: 'The Old Mill Organic Farm Shop and Garden Centre' } })).get('counter-card.svg');
+  assert.match(card, />Then ask your AI about us by name\.</);
 });
 
 test('on the network connector, the scan page asks about the business by name, with copy and open links', () => {
