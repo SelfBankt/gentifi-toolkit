@@ -4,10 +4,14 @@
  */
 export const TESTED_APPS = ['Claude', 'ChatGPT'];
 
+/** Apps whose add steps scan and event pages show: the tested apps, then others customers can try. */
+export const ADD_APPS = [...TESTED_APPS, 'Gemini'];
+
 /** How a customer adds a connector in each tested app, in plain words. */
 export const ADD_STEPS = {
   Claude: 'Settings → Connectors → Add custom connector. Paste the link.',
   ChatGPT: 'In a browser, not the app: chatgpt.com/plugins → Add (top right) → Add custom MCP server. Paste the link, no authentication. Then type @ in a chat to pick it.',
+  Gemini: 'On a computer: gemini.google.com/app → Settings → Connected Apps → Custom apps → add. Paste the link, click Next and follow the steps. Then type @ in a chat to pick it.',
 };
 
 /**

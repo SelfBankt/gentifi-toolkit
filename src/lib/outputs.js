@@ -1,4 +1,4 @@
-import { ADD_STEPS, ASK_LINKS, TESTED_APPS } from './apps.js';
+import { ADD_APPS, ADD_STEPS, ASK_LINKS, TESTED_APPS } from './apps.js';
 import { badgeSvg, counterCardSvg, escapeXml, signsHtml } from './badge.js';
 import { baseUrl, describePrice, humanHours, inStock, mcpUrl, publisherHost } from './project.js';
 import { SUPPORTED_VERSIONS } from '../mcp/protocol.js';
@@ -301,7 +301,7 @@ export function landingPage(project, payees = []) {
     : `<li>Ask, for example: ${e(example)}</li>`;
   // Web addresses in the steps, such as chatgpt.com/plugins, become links a phone can open
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
-  const appSteps = TESTED_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
+  const appSteps = ADD_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
 
   return `<!doctype html>
 <html lang="en-GB">
