@@ -117,10 +117,10 @@ For a business that isn't on Gentifi yet, give its name instead of a project: `g
 gentifi host --dir ./businesses --base-url https://mcp.gentifi.com
 ```
 
-Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and its connector at `/b/<slug>/mcp`. The host also serves, across every business:
+Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and signs, all pointing at the network connector. Hosted businesses don't have a connector of their own: `/b/<slug>/mcp` answers 410 with a message to add the network connector instead. (`gentifi serve` still runs one business's own connector when you host it yourself.) The host also serves, across every business:
 
 - `/mcp`: the network connector. Customers add it once to reach every business; `find_businesses` finds them and the other tools take a business id or name.
-- `/.well-known/mcp/server-card.json` (the network connector) and `/.well-known/mcp/server-cards.json` (it, then every business's own card).
+- `/.well-known/mcp/server-card.json` (the network connector) and `/.well-known/mcp/server-cards.json` (it, then each event's card).
 - `/c/<event>/`: markets, shows and high streets. A settings file at `<dir>/_collections/<event>.json` (`{"name": "…", "kind": "event", "members": ["<business folder>", …], "validFrom": "2026-12-05", "validTo": "2026-12-05"}`; `kind` is event, place, association or marketplace) gives the event a page to add it, its own connector at `/c/<event>/mcp` (the network connector, limited to its members), signs (`badge.svg`, `counter-card.svg`, `signs.html`) and a Business Collections draft 0.2 document at `/c/<event>/collection.json`. Members not hosted yet are listed in the log and left out until they are.
 - `/ask?query=…`: NLWeb-style natural-language search over every business's products, answered from the catalogues with no language model (non-streaming list mode; add `site=<slug>` for one business).
 - `/.well-known/openai-apps-challenge`: the token in `<dir>/.openai-apps-challenge`, for ChatGPT's plugin directory.

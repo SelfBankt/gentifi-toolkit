@@ -246,7 +246,9 @@ This information comes from ${b.name}'s own catalogue and was last updated on ${
 
 ## Live connection
 
-${b.name} has an MCP connector at ${mcpUrl(project)} with the tools \`search_catalogue\`, \`check_availability\`, \`prepare_order\` and \`get_business_info\`. Adding a connector is the user's choice: if they want live stock, tell them it exists and let them approve it in their own app. Without it, use the snapshot below.
+${project.publish?.networkUrl
+  ? `${b.name} is on the Gentifi connector at ${project.publish.networkUrl}, with the tools \`find_businesses\`, \`search_catalogue\`, \`check_availability\`, \`prepare_order\` and \`get_business_info\`. Pass "${b.name}" as \`business\`.`
+  : `${b.name} has an MCP connector at ${mcpUrl(project)} with the tools \`search_catalogue\`, \`check_availability\`, \`prepare_order\` and \`get_business_info\`.`} Adding a connector is the user's choice: if they want live stock, tell them it exists and let them approve it in their own app. Without it, use the snapshot below.
 
 ## Catalogue snapshot (${date})
 

@@ -43,7 +43,10 @@ test('one host serves many businesses, each under /b/<slug>/', async () => {
       assert.match(html, new RegExp(`data-copy="${url}/mcp"`), 'hosted scan pages give the one network connector');
       assert.match(html, /Using Gentifi, does Corner Bakery have /);
       const ard = await (await fetch(`${url}/b/hollow-lane/.well-known/ard.json`)).json();
-      assert.match(JSON.stringify(ard), new RegExp(`${url}/b/hollow-lane/mcp`));
+      assert.match(JSON.stringify(ard), new RegExp(`"${url}/b/hollow-lane/mcp/server-card.json"`));
+      const shopCard = await (await fetch(`${url}/b/hollow-lane/mcp/server-card.json`)).json();
+      assert.equal(shopCard.remotes[0].url, `${url}/mcp`, 'a hosted shop points at the network connector');
+      assert.match(await (await fetch(`${url}/b/hollow-lane/SKILL.md`)).text(), new RegExp(`on the Gentifi connector at ${url}/mcp`));
       assert.equal((await fetch(`${url}/b/hollow-lane`, { redirect: 'manual' })).headers.get('location'), '/b/hollow-lane/');
       assert.equal((await fetch(`${url}/b/nobody/`)).status, 404);
       assert.deepEqual(await (await fetch(`${url}/healthz`)).json(), { ok: true, businesses: 2 });
@@ -51,16 +54,20 @@ test('one host serves many businesses, each under /b/<slug>/', async () => {
       assert.equal(card.title, 'Gentifi');
       assert.equal(card.remotes[0].url, `${url}/mcp`, 'the .well-known card describes the network connector');
       const cards = await (await fetch(`${url}/.well-known/mcp/server-cards.json`)).json();
-      assert.deepEqual(cards.servers.map((c) => c.remotes[0].url).sort(), [`${url}/b/corner-bakery/mcp`, `${url}/b/hollow-lane/mcp`, `${url}/mcp`]);
+      assert.deepEqual(cards.servers.map((c) => c.remotes[0].url), [`${url}/mcp`]);
       assert.equal((await fetch(`${url}/.well-known/openai-apps-challenge`)).status, 404);
       await writeFile(join(dir, '.openai-apps-challenge'), 'token-123\n');
       assert.equal(await (await fetch(`${url}/.well-known/openai-apps-challenge`)).text(), 'token-123', 'the domain check gets the bare token');
 
-      const client = new McpHttpClient(`${url}/b/corner-bakery/mcp`);
+      const retired = await fetch(`${url}/b/corner-bakery/mcp`, { method: 'POST' });
+      assert.equal(retired.status, 410, 'shops no longer have their own connector');
+      assert.match(await retired.text(), new RegExp(`Add the Gentifi connector, ${url}/mcp, and ask about Corner Bakery by name`));
+
+      const client = new McpHttpClient(`${url}/mcp`);
       await client.connect();
       const tools = await client.request('tools/list', {});
       assert.ok(tools.tools.some((t) => t.name === 'prepare_order'));
-      const info = await client.request('tools/call', { name: 'get_business_info', arguments: {} });
+      const info = await client.request('tools/call', { name: 'get_business_info', arguments: { business: 'corner-bakery' } });
       assert.match(JSON.stringify(info), /Corner Bakery/, 'tool calls reach the right business');
     } finally {
       server.close();
