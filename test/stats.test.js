@@ -29,12 +29,10 @@ test('the host counts page opens, AI questions and search appearances, and nothi
       await fetch(`${url}/b/hollow-lane/`, { headers: { 'user-agent': 'Googlebot/2.1' } });
       await fetch(`${url}/b/hollow-lane/ard.json`, { headers: { 'user-agent': BROWSER } });
 
-      const own = new McpHttpClient(`${url}/b/hollow-lane/mcp`);
-      await own.connect();
-      await own.request('tools/call', { name: 'get_business_info', arguments: {} });
       const network = new McpHttpClient(`${url}/mcp`);
       await network.connect();
       await network.request('tools/call', { name: 'find_businesses', arguments: { query: 'eggs' } });
+      await network.request('tools/call', { name: 'get_business_info', arguments: { business: 'hollow-lane' } });
       await network.request('tools/call', { name: 'search_catalogue', arguments: { business: 'hollow-lane', query: 'eggs' } });
       await fetch(`${url}/ask?query=eggs`);
 

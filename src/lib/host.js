@@ -17,8 +17,8 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * Hosts many businesses from one process. Each business is a folder in `dir`
  * named by its slug, holding its gentifi.json, and is served under
  * `${baseUrl}/b/<slug>/`: the scan-to-add page, discovery files, SKILL.md and
- * the MCP connector at `/b/<slug>/mcp`. The network connector at `/mcp`
- * reaches every business at once.
+ * signs. Customers reach every business through the one network connector at
+ * `/mcp`; businesses no longer have their own connector here.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -34,7 +34,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
 
   function mount(slug, path, project, mtimeMs) {
     // Hosted URLs replace whatever the project says, so its files point here
-    const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/b/${slug}/mcp`, networkUrl: `${base}/mcp` } };
+    const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls') });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
     businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted), mtimeMs, name: project.business.name });
@@ -202,7 +202,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (url.pathname === '/.well-known/mcp/server-card.json' || url.pathname === '/.well-known/mcp/server-cards.json') {
       const card = networkCard(base, VERSION);
       const body = url.pathname.endsWith('cards.json')
-        ? { servers: [card, ...[...events.values()].map((ev) => eventCard(ev, base, VERSION)), ...[...businesses.values()].map((b) => JSON.parse(b.files.get('mcp/server-card.json')))] }
+        ? { servers: [card, ...[...events.values()].map((ev) => eventCard(ev, base, VERSION))] }
         : card;
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' });
       return res.end(JSON.stringify(body, null, 2));
@@ -219,6 +219,8 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (!business) return sendText(res, 404, 'No business here.\n');
     if (!m[2]) return sendText(res, 301, '', { location: `/b/${m[1]}/${url.search}` });
     if ((m[2] === '/' || m[2] === '/index.html') && req.method === 'GET' && !isBot(req.headers['user-agent'])) stats?.count(business.slug, 'pageViews');
+    // Shops' own connectors are retired: point anyone who added one at the network connector
+    if (m[2] === '/mcp') return sendText(res, 410, `${business.name} no longer has its own connector. Add the Gentifi connector, ${base}/mcp, and ask about ${business.name} by name.\n`);
     req.url = `${m[2]}${url.search}`;
     return business.handler(req, res);
   }
