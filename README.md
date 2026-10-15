@@ -113,6 +113,10 @@ A UCP profile is planned for businesses with an online checkout that implements 
 
 For bakeries and food shops, `examples/bakery-template.csv` adds allergens, dietary notes and pre-order notice. Agents get allergens exactly as given, and are told never to assume an item is free from anything when none are listed.
 
+## Gentifi Business Profile (draft)
+
+`gentifi profile --out profile.json` writes the business as a [Gentifi Business Profile](https://github.com/SelfBankt/gentifi-profile), draft 0.1: the open format the toolkit is heading towards, with freshness on every piece of availability. A spreadsheet only says when the catalogue last changed, so each stock record is marked `likely`, from the owner, as of that time; items with no stock given get no record rather than a guessed one. Orders and enquiries are `request_to_confirm`, so the business always confirms. Check the file with `gentifi-validate` from that repository. `gentifi build` doesn't write it yet.
+
 ## The business's own website
 
 Search engines and AI search mostly trust a business's own site, so `gentifi website` prints a snippet to paste once into its `<head>`: schema.org `LocalBusiness` data with the details that rarely change (name, address, hours, contact) and a link to the Gentifi page for products and prices, so it never goes stale when a price changes. `gentifi website --check https://their-site.example` reports what the site says today: missing or company-only markup, a name, phone number, postcode or hours that differ from Gentifi, a `robots.txt` that blocks Google, Bing, ChatGPT, Claude or Perplexity search, and what to check by hand on the Google Business Profile.
