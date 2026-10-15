@@ -3,7 +3,8 @@ import { describePrice, formatMoney, humanHours, inStock, toMinor } from '../lib
 /**
  * The MCP tools for one business. Every tool is read-only: nothing here places
  * an order. prepare_order returns a summary and a link or message the customer
- * uses to confirm with the business themselves.
+ * uses to confirm with the business themselves. On a Gentifi host that link is
+ * the confirmation page (see lib/confirm.js), which hands on to the same place.
  */
 
 export class ToolError extends Error {}
@@ -115,7 +116,7 @@ function businessView(project) {
 
 // --- Ordering hand-off ---
 
-function orderEmail(project, lines, total, { collectionDate, note }) {
+function orderEmail(project, lines, total, { collectionDate, note, ref }) {
   const b = project.business;
   const verb = project.ordering?.method === 'quote' ? 'a quote for' : 'to reserve';
   const body = [
@@ -126,6 +127,7 @@ function orderEmail(project, lines, total, { collectionDate, note }) {
     total ? `Total: ${total.formatted}` : null,
     collectionDate ? `Collection or date: ${collectionDate}` : null,
     note ? `Note: ${note}` : null,
+    ref ? `Gentifi reference: ${ref}` : null,
     '',
     `Prepared with my AI agent from your catalogue (prices as of ${project.catalogue.updatedAt.slice(0, 10)}). Please reply to confirm.`,
   ].filter((x) => x !== null).join('\n');
@@ -133,7 +135,7 @@ function orderEmail(project, lines, total, { collectionDate, note }) {
   return `mailto:${encodeURIComponent(b.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-function nextStep(project, lines, total, extra) {
+export function nextStep(project, lines, total, extra) {
   const o = project.ordering ?? {};
   const b = project.business;
   const confirm = 'Show the customer this summary first. Only they can confirm it.';
@@ -162,9 +164,27 @@ function nextStep(project, lines, total, extra) {
   };
 }
 
+/** The same next step, worded for the customer on the confirmation page. */
+export function customerHandoff(project, lines, total, extra) {
+  const step = nextStep(project, lines, total, extra);
+  const name = project.business.name;
+  const ref = extra.ref ? ` and quote reference ${extra.ref}` : '';
+  const customerText = {
+    link: step.label === 'Open the booking page' ? `Choose a time and book on ${name}’s own booking page.` : `Finish and pay on ${name}’s own checkout page.`,
+    email: `This opens an email to ${name} with your order and reference. Send it, and ${name} replies to confirm.`,
+    phone: `Call ${name}${ref}.`,
+    contact: `${name} hasn’t set up online orders yet. Contact them directly${ref}.`,
+  }[step.type];
+  return { ...step, customerText };
+}
+
 // --- Tool definitions ---
 
-export function businessTools(project) {
+/**
+ * confirmLink, when given (on a Gentifi host), turns a priced order into the
+ * confirmation page's link: ({ items, collectionDate, note }) => url.
+ */
+export function businessTools(project, { confirmLink = null } = {}) {
   const items = project.catalogue.items;
   const currency = project.business.currency || 'GBP';
   const asOf = project.catalogue.updatedAt;
@@ -257,7 +277,14 @@ export function businessTools(project) {
           total,
           collectionDate: collectionDate || undefined,
           warnings,
-          nextStep: nextStep(project, lines, total, { collectionDate, note }),
+          nextStep: confirmLink
+            ? {
+              type: 'confirm',
+              label: 'Check and confirm the order',
+              url: confirmLink({ items: lines.map((l) => [l.sku, l.quantity]), collectionDate, note }),
+              instructions: `Show the customer this summary, then give them this link. They check the order and tap Confirm on the page, which then takes them to ${name}'s own way of ordering (${nextStep(project, lines, total, {}).label.toLowerCase()}). Nothing is ordered until they do.`,
+            }
+            : nextStep(project, lines, total, { collectionDate, note }),
           pricesAsOf: asOf,
         };
       },

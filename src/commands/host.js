@@ -44,7 +44,7 @@ export default {
     out([
       `Gentifi host (gentifi-toolkit ${VERSION}) on ${host}:${port}, public at ${hosted.baseUrl}`,
       `Network connector (every business): ${hosted.baseUrl}/mcp`,
-      ...[...hosted.businesses.values()].map((b) => `  ${b.name}: ${hosted.baseUrl}/b/${b.slug}/  (connector ${hosted.baseUrl}/b/${b.slug}/mcp)`),
+      ...[...hosted.businesses.values()].map((b) => `  ${b.name}: ${hosted.baseUrl}/b/${b.slug}/`),
       hosted.businesses.size ? '' : '  No businesses yet: add a folder with a gentifi.json.',
       syncMinutes > 0 ? `Re-reading sheets and the folder every ${syncMinutes} minutes.` : 'Sheet syncing is off; the folder is checked every minute.',
     ].join('\n'));
