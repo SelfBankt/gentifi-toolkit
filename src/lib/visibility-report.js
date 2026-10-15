@@ -77,7 +77,7 @@ export function visibilityReport({ name, url, results, date = new Date(), contac
   <ul>${profile.map((r) => `<li><span>${e(r.text)}</span></li>`).join('')}</ul>
 </section>
 <section class="next">
-  <b>How Gentifi helps.</b> We write the structured data for your website, put your products and prices into Claude and ChatGPT so customers can ask about them, and give you signs that let customers add you in a scan. You keep your own till and checkout.
+  <b>How Gentifi helps.</b> We write the structured data for your website, put your products and prices into Claude, ChatGPT and Gemini so customers can ask about them, and give you signs that let customers add you in a scan. You keep your own till and checkout.
 </section>
 <footer><span>${e(contact)}</span><span>gentifi.com</span></footer>
 </div>
