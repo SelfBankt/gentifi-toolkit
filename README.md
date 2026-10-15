@@ -6,7 +6,7 @@ The Gentifi Toolkit is open source. Point it at a catalogue and it generates wha
 
 It works for consumers (B2C) and business buyers (B2B) on the same rails.
 
-> **Status: early preview (0.1).** Spreadsheets (CSV, including a Google Sheet published as CSV) work end to end. Shopify, WooCommerce and booking-system imports, and publishing to the Gentifi network, are planned: those commands say so and exit with code 2.
+> **Status: early preview (0.1).** Spreadsheets (CSV or Excel, including a Google Sheet published as CSV) and product exports from Square, Shopify and WooCommerce work end to end. Live connections to those systems, booking-system imports and publishing to the Gentifi network are planned: those commands say so and exit with code 2.
 
 ## Try it in a minute
 
@@ -76,7 +76,19 @@ One row per product or service. Header names are flexible (`Price (£)` and `pri
 | `availability` | no | Baked Fri and Sat |
 | `description`, `url`, `kind` (`product` or `service`) | no | |
 
-Rows without a name or a usable price are skipped and reported, never guessed. For a Google Sheet, use *File > Share > Publish to web > CSV* and pass that link to `--file`; `gentifi sync` picks up changes.
+Rows without a name or a usable price are skipped and reported, never guessed. For a Google Sheet, use *File > Share > Publish to web > CSV* and pass that link to `--file`; `gentifi sync` picks up changes. An Excel file (`.xlsx`) works too: the first worksheet is read.
+
+### From a till or online shop
+
+Pass the system's own product export with `--from` and `--file`; nothing needs an account or a password:
+
+| `--from` | Export | Read as |
+| --- | --- | --- |
+| `square` | Items > Item library > Actions > Export library (.xlsx or CSV) | One item per variation (`Sourdough (Large)`); stock is the sum of the `Current Quantity` columns; archived, unsellable and variable-price items left out and reported |
+| `shopify` | Products > Export, plain CSV | One item per variant, named by its options; image-only rows, drafts and archived products left out |
+| `woocommerce` | Products > All Products > Export | Simple products and variations (named from the parent); the sale price when set; private and draft products left out |
+
+A `csv` source that turns out to be one of these exports is read as that export, so a shop can hand over whatever file it has. `gentifi sync` and the host's ten-minute re-read work the same way when `--file` is a link.
 
 ## What it generates
 

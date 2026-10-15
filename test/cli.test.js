@@ -41,7 +41,7 @@ test('init rejects an unknown source and needs a file and a name', async () => {
 });
 
 test('sources that are not built yet exit 2 with a plan', async () => {
-  for (const from of ['shopify', 'woocommerce', 'booking']) {
+  for (const from of ['booking']) {
     const io = capture();
     assert.equal(await main(['init', '--from', from], io), 2);
     assert.match(io.stderr, /not implemented yet/);

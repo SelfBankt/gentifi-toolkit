@@ -1,22 +1,21 @@
 import { access } from 'node:fs/promises';
 import { notImplemented } from './not-implemented.js';
-import { readSource } from '../lib/catalogue.js';
+import { SOURCE_TYPES, readSource } from '../lib/catalogue.js';
+import { IMPORTERS } from '../lib/imports.js';
 import { ORDER_METHODS, createProject, inferOrderMethod, projectPath, saveProject, slugify } from '../lib/project.js';
 
-export const SOURCES = ['shopify', 'csv', 'woocommerce', 'booking'];
+export const SOURCES = [...SOURCE_TYPES, 'booking'];
 
 const PLANS = {
-  shopify: ['Read products, prices and stock with the Shopify Admin API (token from an environment variable)'],
-  woocommerce: ['Read products, prices and stock with the WooCommerce Store API'],
   booking: ['Read services, prices and free slots from a booking system'],
 };
 
 export default {
   summary: 'Import a business catalogue and create a gentifi.json project',
-  usage: '--from csv --file <path or URL> --name <business> [options]',
+  usage: '--from csv|square|shopify|woocommerce --file <path or URL> --name <business> [options]',
   options: {
-    from: { type: 'string', description: `Catalogue source: ${SOURCES.join(', ')} (csv works today)` },
-    file: { type: 'string', description: 'CSV file, or the https link of a published Google Sheet (csv)' },
+    from: { type: 'string', description: `Catalogue source: ${SOURCES.join(', ')} (all but booking work today, from a file)` },
+    file: { type: 'string', description: 'CSV or .xlsx file, the https link of a published Google Sheet, or a Square, Shopify or WooCommerce product export' },
     name: { type: 'string', description: 'Business name, as customers know it' },
     kind: { type: 'string', description: 'What kind of business, e.g. "Farm shop"' },
     description: { type: 'string', description: 'One line about the business, in its own words' },
@@ -42,14 +41,16 @@ export default {
       err(`Unknown source "${values.from}". Use one of: ${SOURCES.join(', ')}`);
       return 1;
     }
-    if (values.from !== 'csv') {
+    if (PLANS[values.from]) {
       return notImplemented(`init --from ${values.from}`, [
         ...PLANS[values.from],
         'Until then: export a spreadsheet and use --from csv',
       ], { err });
     }
     if (!values.file) {
-      err('Pass the catalogue with --file: a CSV file, or the link of a Google Sheet published as CSV.');
+      err(IMPORTERS[values.from]
+        ? `Pass the export with --file. ${IMPORTERS[values.from].export}.`
+        : 'Pass the catalogue with --file: a CSV or Excel file, or the link of a Google Sheet published as CSV.');
       return 1;
     }
     if (!values.name?.trim()) {
@@ -79,7 +80,7 @@ export default {
       return 1;
     }
 
-    const source = { type: 'csv', file: values.file };
+    const source = { type: values.from, file: values.file };
     let imported;
     try {
       imported = await readSource(source);

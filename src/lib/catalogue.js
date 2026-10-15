@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { parseCsv } from './csv.js';
+import { parseRows, recordsFromRows } from './csv.js';
+import { IMPORTERS, detectExport } from './imports.js';
+import { isXlsx, readXlsxRows } from './xlsx.js';
 import { slugify } from './project.js';
 
 // Header names people actually use in spreadsheets, after normaliseHeader().
@@ -119,20 +121,47 @@ export function itemsFromRecords(records) {
   return { items, problems };
 }
 
-/** Reads a catalogue from a local CSV file or an http(s) URL (such as a published Google Sheet). */
+/** Catalogue source types: a spreadsheet, or a till or online shop's product export. */
+export const SOURCE_TYPES = ['csv', ...Object.keys(IMPORTERS)];
+
+/**
+ * Reads a catalogue from a local file or an http(s) URL (such as a published Google Sheet):
+ * CSV or .xlsx, as an ordinary spreadsheet or a Square, Shopify or WooCommerce export.
+ * A "csv" source that turns out to be one of those exports is read as that export.
+ */
 export async function readSource(source, { fetchImpl = globalThis.fetch } = {}) {
-  if (source.type !== 'csv') throw new Error(`Unsupported source type "${source.type}"`);
-  let text;
+  if (!SOURCE_TYPES.includes(source.type)) throw new Error(`Unsupported source type "${source.type}"`);
+  let bytes;
   if (/^https?:\/\//i.test(source.file)) {
-    const res = await fetchImpl(source.file, { headers: { accept: 'text/csv, text/plain;q=0.9, */*;q=0.1' } });
+    const res = await fetchImpl(source.file, { headers: { accept: 'text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;q=0.9, text/plain;q=0.8, */*;q=0.1' } });
     if (!res.ok) throw new Error(`Could not download ${source.file}: HTTP ${res.status}`);
-    text = await res.text();
+    bytes = Buffer.from(await res.arrayBuffer());
+  } else {
+    bytes = await readFile(resolve(source.file));
+  }
+  let rows;
+  if (isXlsx(bytes)) {
+    try {
+      rows = readXlsxRows(bytes);
+    } catch (e) {
+      throw new Error(`${source.file} looks like an Excel file but could not be read (${e.message}). Save it as CSV and try again.`);
+    }
+  } else {
+    const text = bytes.toString('utf8');
     if (/^\s*<(!doctype|html)/i.test(text)) {
       throw new Error(`${source.file} returned a web page, not CSV. For a Google Sheet use File > Share > Publish to web > CSV.`);
     }
-  } else {
-    text = await readFile(resolve(source.file), 'utf8');
+    rows = parseRows(text);
   }
-  const { records } = parseCsv(text);
-  return itemsFromRecords(records);
+  const { headers, records } = recordsFromRows(rows);
+  const found = detectExport(headers);
+  const type = source.type === 'csv' ? found : source.type;
+  if (type && type !== found) {
+    const { name, export: how } = IMPORTERS[type];
+    throw new Error(`${source.file} doesn't look like a ${name} product export. Export it from ${how}.`);
+  }
+  if (!type) return itemsFromRecords(records);
+  const mapped = IMPORTERS[type].map(records);
+  const { items, problems } = itemsFromRecords(mapped.records);
+  return { items, problems: [...mapped.problems, ...problems] };
 }

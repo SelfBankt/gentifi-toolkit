@@ -116,7 +116,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   async function syncAll() {
     for (const b of businesses.values()) {
       const source = b.project.catalogue?.source;
-      if (source?.type !== 'csv' || !/^https?:\/\//.test(source.file ?? '')) continue;
+      if (!source?.type || !/^https?:\/\//.test(source.file ?? '')) continue;
       try {
         const imported = await readSource(source, { fetchImpl });
         if (!imported.items.length) {
