@@ -70,7 +70,12 @@ export function normaliseHeader(h) {
  * Each record keeps its spreadsheet row number (the header is row 1) for messages.
  */
 export function parseCsv(text) {
-  const [header = [], ...body] = parseRows(text);
+  return recordsFromRows(parseRows(text));
+}
+
+/** Rows of cells (from CSV or a spreadsheet) as records keyed by the normalised header row. */
+export function recordsFromRows(rows) {
+  const [header = [], ...body] = rows;
   const headers = header.map(normaliseHeader);
   const records = [];
   body.forEach((cells, i) => {

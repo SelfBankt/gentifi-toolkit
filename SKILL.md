@@ -14,7 +14,7 @@ You are helping a business owner, or their developer, run it. Work through the s
 
 | Works | Not built yet (exits with code 2) |
 | --- | --- |
-| Import from a CSV file or a Google Sheet published as CSV | Import from Shopify, WooCommerce or a booking system |
+| Import from a CSV or Excel file, a Google Sheet published as CSV, or a Square, Shopify or WooCommerce product export | Live connections to tills and online shops; booking systems |
 | `sync`, `check`, `build`, `serve`, `publish --self-host`, `collection check` | Publishing to the Gentifi network |
 
 When a command exits with code 2, tell the user plainly that this step isn't built yet, summarise what it will do from the plan it printed, and suggest the alternative it gives (usually exporting a spreadsheet). Don't work around it by writing the output files by hand unless the user explicitly asks.
@@ -47,12 +47,13 @@ Ask where the products, prices and stock live:
 
 | `--from` | Use for | Status |
 | --- | --- | --- |
-| `csv` | A spreadsheet export, or a Google Sheet published as CSV; also pass `--file` | Works |
-| `shopify` | A Shopify store | Planned |
-| `woocommerce` | A WooCommerce store | Planned |
+| `csv` | A spreadsheet (CSV or .xlsx), or a Google Sheet published as CSV; also pass `--file` | Works |
+| `square` | Square's item library export (Items > Item library > Actions > Export library), .xlsx or CSV, in `--file` | Works |
+| `shopify` | Shopify's product export (Products > Export, plain CSV), in `--file` | Works |
+| `woocommerce` | WooCommerce's product export (Products > All Products > Export), in `--file` | Works |
 | `booking` | A booking or appointments system | Planned |
 
-For a spreadsheet, ask for the file, or for a Google Sheet published as CSV (*File > Share > Publish to web > CSV*), which lets them update stock later with `gentifi sync`. Each row needs a name and a price; see the column table in the README. For a planned source, explain it isn't built yet and offer the spreadsheet route.
+For a spreadsheet, ask for the file, or for a Google Sheet published as CSV (*File > Share > Publish to web > CSV*), which lets them update stock later with `gentifi sync`. Each row needs a name and a price; see the column table in the README. For Square, Shopify or WooCommerce, ask the owner for the product export file: prices and stock come from it, one item per variation, and archived, draft or private items are left out. A `csv` source that turns out to be one of those exports is read as that export. For a planned source, explain it isn't built yet and offer the spreadsheet route.
 
 ### 4. Ask for the business details
 
