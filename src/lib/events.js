@@ -1,6 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ADD_STEPS, TESTED_APPS } from './apps.js';
+import { ADD_APPS, ADD_STEPS } from './apps.js';
 import { escapeXml as e } from './badge.js';
 import { COLLECTIONS_NS, SERVER_CARD_SCHEMA } from './outputs.js';
 import { COLLECTION_TYPE, KINDS } from './collections.js';
@@ -120,7 +120,7 @@ export function eventCollection(event, members, base) {
 export function eventPage(event, members, base) {
   const link = `${base}/c/${event.slug}/mcp`;
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
-  const steps = TESTED_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
+  const steps = ADD_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
   const first = members[0];
   const thing = first?.project.catalogue.items[0]?.name?.replace(/\s*\(.*\)$/, '').toLowerCase();
   const example = thing ? `“Which stalls have ${thing}?”` : '“What can I buy here?”';

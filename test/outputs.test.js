@@ -105,6 +105,7 @@ test('the badge carries the business link and the brand', () => {
   assert.match(page, /Add Hollow Lane Farm Shop to your AI assistant/);
   assert.match(page, /<strong>Claude:<\/strong> Settings → Connectors → Add custom connector/);
   assert.match(page, /<strong>ChatGPT:<\/strong> In a browser, not the app: <a href="https:\/\/chatgpt\.com\/plugins">chatgpt\.com\/plugins<\/a> → Add \(top right\) → Add custom MCP server/);
+  assert.match(page, /<strong>Gemini:<\/strong> On a computer: <a href="https:\/\/gemini\.google\.com\/app">gemini\.google\.com\/app<\/a> → Settings → Connected Apps/);
   assert.match(page, /Have they got free-range eggs\?/);
   assert.match(svg, /<path fill="#05414D" d="M4 4h7/);
 });
