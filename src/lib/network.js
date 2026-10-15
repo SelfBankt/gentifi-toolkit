@@ -21,7 +21,8 @@ const BUSINESS_ARG = {
 export const NETWORK_INSTRUCTIONS = 'Gentifi connects you to independent local businesses using their own catalogues. '
   + 'When the customer names a business or asks for something local, use find_businesses first, then pass its id as business to the other tools. '
   + 'Prices and stock can change: say when they were last updated. '
-  + 'Nothing is ordered through this server. prepare_order returns a summary and a link: show the customer the summary and let them confirm with the business themselves.';
+  + 'Nothing is ordered through this server. prepare_order returns a summary and a link to a confirmation page: show the customer the summary and give them the link. '
+  + 'They check the order and tap Confirm there, then finish with the business the way it takes orders (email, its own checkout, booking page or phone).';
 
 const words = (b) => tokens([b.name, b.project.business.kind, b.project.business.area, b.project.business.address?.locality, b.project.business.description].join(' '));
 

@@ -44,7 +44,7 @@ test('the host counts page opens, AI questions and search appearances, and nothi
 
       stats.count('hollow-lane', 'pageViews');
       await stats.flush();
-      assert.deepEqual((await readStats(dir))[0], { slug: 'hollow-lane', pageViews: 3, toolCalls: 2, searchAppearances: 2 }, 'flushes add up');
+      assert.deepEqual((await readStats(dir))[0], { slug: 'hollow-lane', pageViews: 3, toolCalls: 2, searchAppearances: 2, confirmations: 0 }, 'flushes add up');
 
       const lines = [];
       assert.equal(await statsCommand.run({ dir }, { out: (l) => lines.push(l), err: (l) => lines.push(l) }), 0);

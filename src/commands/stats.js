@@ -26,8 +26,8 @@ export default {
       out(JSON.stringify({ days, businesses: rows }, null, 2));
       return 0;
     }
-    const head = ['Business', 'Page opened', 'AI asked about it', 'Came up in searches'];
-    const table = [head, ...rows.map((r) => [r.slug, r.pageViews, r.toolCalls, r.searchAppearances].map(String))];
+    const head = ['Business', 'Page opened', 'AI asked about it', 'Came up in searches', 'Orders confirmed'];
+    const table = [head, ...rows.map((r) => [r.slug, r.pageViews, r.toolCalls, r.searchAppearances, r.confirmations ?? 0].map(String))];
     const widths = head.map((_, i) => Math.max(...table.map((row) => row[i].length)));
     out(`Last ${days} day${days === 1 ? '' : 's'}, counted anonymously by gentifi host:\n`);
     for (const row of table) out(row.map((c, i) => (i ? c.padStart(widths[i]) : c.padEnd(widths[i]))).join('   '));

@@ -51,12 +51,15 @@ test('pay_order asks the customer first, with a clear message and no payment req
   assert.equal(first.structuredContent, undefined);
 });
 
+// Changes a character mid-string: the last base64 character can carry only padding bits, so changing it may change nothing
+const flip = (s) => { const i = Math.floor(s.length / 2); return s.slice(0, i) + (s[i] === 'A' ? 'B' : 'A') + s.slice(i + 1); };
+
 test('declining stops the order; forged or mismatched confirmations ask again', async () => {
   const { call } = await setup();
   const first = await call(EGGS);
   const declined = await call(EGGS, { inputResponses: { confirm: { action: 'decline' } }, requestState: first.requestState });
   assert.equal(declined.structuredContent.status, 'declined');
-  const forged = await call(EGGS, { ...ACCEPT, requestState: first.requestState.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')) });
+  const forged = await call(EGGS, { ...ACCEPT, requestState: flip(first.requestState) });
   assert.equal(forged.resultType, 'input_required');
   const otherOrder = await call({ items: [{ sku: 'EGG-12', quantity: 3 }] }, { ...ACCEPT, requestState: first.requestState });
   assert.equal(otherOrder.resultType, 'input_required');

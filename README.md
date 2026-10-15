@@ -119,7 +119,17 @@ Search engines and AI search mostly trust a business's own site, so `gentifi web
 
 For a business that isn't on Gentifi yet, give its name instead of a project: `gentifi website --check https://their-site.example --name "Their Shop" --report report.html` writes a one-page "How AI sees your business" report to send before a first conversation. It states only what the check found; print it or save it as a PDF from a browser.
 
-`gentifi host` also keeps anonymous daily counts for each business in `<dir>/<slug>/stats.json`: page opens by people (not crawlers or link previews), questions from AI tools, and appearances in searches. Only numbers are kept, never who, from where or what was asked. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
+`gentifi host` also keeps anonymous daily counts for each business in `<dir>/<slug>/stats.json`: page opens by people (not crawlers or link previews), questions from AI tools, appearances in searches, and orders confirmed. Only numbers are kept, never who, from where or what was asked.
+
+### Confirmation page and witness record
+
+On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, instead of going straight to the business's email or checkout. The order travels inside the link, signed with the host's key (`GENTIFI_ORDER_SECRET`, or `<dir>/.order-secret`, made on first run), so preparing an order stores nothing and every tool stays read-only. Links last a week and can't be altered.
+
+- Opening the link shows the order at today's prices, with a notice if the business has updated its catalogue since. Link previews and crawlers can open it safely.
+- Tapping **Confirm** appends one line to `<dir>/<slug>/witness.jsonl`: a reference, when it was prepared and confirmed, the items, prices and total, and the collection date. Nothing about who the customer is; a note is kept only as a hash. Confirming twice records once.
+- The page then shows the reference and hands the customer on to the business's own way of ordering: an email with the order and reference, its checkout or booking page, or its phone number.
+
+`gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses
 

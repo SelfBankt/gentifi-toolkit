@@ -5,12 +5,13 @@ import { SLUG } from './host.js';
 /**
  * Private, anonymous counts for each hosted business, per day: how often its
  * page was opened (pageViews), how often AI tools asked about it (toolCalls),
- * and how often it came up in searches across Gentifi (searchAppearances).
+ * how often it came up in searches across Gentifi (searchAppearances), and how
+ * many orders customers confirmed on the confirmation page (confirmations).
  * Only numbers are kept, in <dir>/<slug>/stats.json: never who, from where,
  * or what was asked.
  */
 
-export const KINDS = ['pageViews', 'toolCalls', 'searchAppearances'];
+export const KINDS = ['pageViews', 'toolCalls', 'searchAppearances', 'confirmations'];
 const KEEP_DAYS = 400;
 
 /** Crawlers, link previews and scripts don't count as people opening a page. */

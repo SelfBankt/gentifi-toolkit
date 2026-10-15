@@ -2,7 +2,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
-import { businessTools } from '../mcp/tools.js';
+import { ToolError, businessTools, customerHandoff, priceOrder } from '../mcp/tools.js';
+import { confirmPage, confirmedPage, findWitness, linkProblemPage, orderRef, orderSecret, orderToken, readOrderToken, recordWitness } from './confirm.js';
 import { NETWORK_INSTRUCTIONS, networkCard, networkTools, nlwebAsk } from './network.js';
 import { VERSION } from './version.js';
 import { isBot } from './stats.js';
@@ -18,7 +19,8 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * named by its slug, holding its gentifi.json, and is served under
  * `${baseUrl}/b/<slug>/`: the scan-to-add page, discovery files, SKILL.md and
  * signs. Customers reach every business through the one network connector at
- * `/mcp`; businesses no longer have their own connector here.
+ * `/mcp`; businesses no longer have their own connector here. Orders prepared
+ * on it are confirmed by the customer at `/o/<link>` (see confirm.js).
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -28,16 +30,21 @@ const sendText = (res, status, text, headers = {}) => {
   res.end(text);
 };
 
-export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null }) {
+export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env }) {
   const base = baseUrl.replace(/\/+$/, '');
   const businesses = new Map();
+  let secret = null;
 
   function mount(slug, path, project, mtimeMs) {
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
-    const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls') });
+    // The order rides in the signed link, so preparing one stores nothing
+    const confirmLink = ({ items, collectionDate, note }) => `${base}/o/${orderToken(secret, {
+      business: slug, items, collectionDate, note, pricesAsOf: project.catalogue.updatedAt, preparedAt: new Date().toISOString(),
+    })}`;
+    const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls'), confirmLink });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted), mtimeMs, name: project.business.name });
+    businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name });
   }
 
   // Markets, shows and high streets: each gets its own connector, limited to its members
@@ -76,6 +83,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
 
   /** Loads new or changed businesses and drops removed ones. One broken business never stops the others. */
   async function scan() {
+    secret ??= await orderSecret(dir, env);
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -167,6 +175,45 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     }
   }
 
+  /** The customer's confirmation page. GET only shows the order; the Confirm button POSTs. */
+  async function handleConfirm(token, req, res) {
+    const page = (status, html, headers = {}) => {
+      res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'x-content-type-options': 'nosniff', ...headers });
+      res.end(req.method === 'HEAD' ? undefined : html);
+    };
+    if (!['GET', 'HEAD', 'POST'].includes(req.method)) return sendText(res, 405, 'Method not allowed.\n', { allow: 'GET, HEAD, POST' });
+    const order = secret && readOrderToken(secret, token);
+    if (!order) return page(404, linkProblemPage('This link has expired or isn’t complete. Order links last a week.'));
+    const business = businesses.get(order.business);
+    if (!business) return page(404, linkProblemPage('This business isn’t on Gentifi any more.'));
+    const { project } = business;
+    const currency = project.business.currency || 'GBP';
+    let priced;
+    try {
+      priced = priceOrder(project.catalogue.items, order.items, currency);
+    } catch (e) {
+      if (!(e instanceof ToolError)) throw e;
+      return page(409, linkProblemPage(`Something in this order isn’t sold by ${project.business.name} any more.`));
+    }
+    const ref = orderRef(token);
+    if (req.method === 'POST') {
+      // Drain the (empty) form body, then record once: confirming twice changes nothing
+      for await (const chunk of req) if (chunk.length > 4096) break;
+      if (!await findWitness(dir, business.slug, ref)) {
+        await recordWitness(dir, business.slug, { ref, order, priced, currency });
+        stats?.count(business.slug, 'confirmations');
+        log(`[${business.slug}] Order ${ref} confirmed`);
+      }
+      return page(303, '', { location: `/o/${token}` });
+    }
+    const witness = await findWitness(dir, business.slug, ref);
+    if (witness) {
+      const handoff = customerHandoff(project, priced.lines, priced.total, { collectionDate: order.collectionDate, note: order.note, ref });
+      return page(200, confirmedPage({ project, priced, ref, handoff, confirmedAt: witness.confirmedAt }));
+    }
+    return page(200, confirmPage({ project, order, priced, changed: order.pricesAsOf !== project.catalogue.updatedAt }));
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/healthz') {
@@ -212,6 +259,8 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       const token = await readFile(join(dir, '.openai-apps-challenge'), 'utf8').then((t) => t.trim(), () => '');
       return token ? sendText(res, 200, token) : sendText(res, 404, 'No challenge set.\n');
     }
+    const o = /^\/o\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);
+    if (o) return handleConfirm(o[1], req, res);
     const c = /^\/c\/([^/]+)(\/.*)?$/.exec(url.pathname);
     if (c) return handleEvent(c[1], c[2], req, res, url);
     const m = /^\/b\/([^/]+)(\/.*)?$/.exec(url.pathname);
