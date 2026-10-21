@@ -316,19 +316,29 @@ test('what the owner marks sold out in Telegram is what agents see, until the sh
       await host.scan();
       const client = new McpHttpClient(`${url}/mcp`);
       await client.connect();
-      const available = async () => (await client.request('tools/call', {
-        name: 'check_availability', arguments: { business: 'hollow-lane', sku: 'EGG-12' } })).structuredContent.available;
-      assert.equal(await available(), false, 'sold out, as the owner said');
+      const check = async () => (await client.request('tools/call', {
+        name: 'check_availability', arguments: { business: 'hollow-lane', sku: 'EGG-12' } })).structuredContent;
+      const available = async () => (await check()).available;
+      const sold = await check();
+      assert.equal(sold.available, false, 'sold out, as the owner said');
+      assert.equal(sold.availability, 'Sold out', 'the availability text agrees, not the sheet’s "In stock"');
+      assert.equal(sold.stockSource, 'owner');
+      assert.equal(sold.stockAsOf, later);
+      assert.match(sold.note, /marked this sold out at .*after the catalogue was last updated/);
       const saved = await loadProject(join(dir, 'hollow-lane', 'gentifi.json'));
       assert.equal(saved.catalogue.items.find((i) => i.sku === 'EGG-12').stock, 40, 'the saved project keeps the sheet');
       const profile = JSON.parse(await readFile(join(dir, 'hollow-lane', 'gentifi-profile.json'), 'utf8'));
       assert.equal(profile.availability.find((r) => r.offering_id === 'egg-12').status, 'in_stock', 'so does the bot’s profile');
 
       await setMarks({ 'egg-12': { status: 'in_stock', at: later } });
-      assert.equal(await available(), true, 'back in stock');
+      const back = await check();
+      assert.equal(back.available, true, 'back in stock');
+      assert.equal(back.availability, 'In stock', 'the sheet’s own note stays');
+      assert.match(back.note, /marked this back in stock at .*how many isn’t known/);
 
       await setMarks({ 'egg-12': { status: 'out_of_stock', at: '2020-01-01T00:00:00Z' } });
       assert.equal(await available(), true, 'a mark older than the sheet gives way to it');
+      assert.equal((await check()).stockSource, undefined, 'and the item no longer says the owner marked it');
 
       await writeFile(file, '{"stock": ');
       await utimes(file, new Date(Date.now() + 1e6), new Date(Date.now() + 1e6));

@@ -86,6 +86,9 @@ function itemView(item, currency) {
     stock: item.stock ?? undefined,
     inStock: inStock(item) ?? undefined,
     availability: item.availability || undefined,
+    // Stock the owner marked since the catalogue was read (sold out, or back), and when
+    stockSource: item.stockSource || undefined,
+    stockAsOf: item.stockAsOf || undefined,
     // Allergens and dietary notes are exactly as the business gave them; when absent, they're unknown, not "none"
     allergens: item.allergens || undefined,
     dietary: item.dietary || undefined,
@@ -252,6 +255,9 @@ export function businessTools(project, { confirmLink = null } = {}) {
         if (available === null) note = `${name}'s catalogue doesn't give a stock level for this item.`;
         else if (!available && typeof item.stock === 'number' && item.stock > 0) note = `Only ${item.stock} in stock.`;
         else if (!available) note = 'Out of stock.';
+        if (item.stockSource === 'owner') {
+          note = `${name} marked this ${available ? 'back in stock' : 'sold out'} at ${item.stockAsOf}, after the catalogue was last updated${available ? '; how many isn’t known' : ''}.`;
+        }
         return { ...itemView(item, currency), quantity, available, note, pricesAsOf: asOf };
       },
     },

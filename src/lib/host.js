@@ -40,6 +40,7 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const SOLD_OUT_TEXT = /sold out|out of stock|unavailable|none left/i;
 
 const sendText = (res, status, text, headers = {}) => {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', ...headers });
@@ -73,7 +74,8 @@ function botFile(file, parse, log, checkMs) {
 
 /**
  * The project as customers' agents see it: the owner's marks from Telegram (by offering
- * id: { status, at }) over the sheet's stock, where they're newer than the sheet.
+ * id: { status, at }) over the sheet's stock, where they're newer than the sheet. A marked
+ * item says so (stockSource, stockAsOf), and its availability text agrees with the mark.
  */
 export function withOwnerStock(project, marks = {}) {
   const ids = offeringIds(project.catalogue.items);
@@ -81,8 +83,13 @@ export function withOwnerStock(project, marks = {}) {
   const items = project.catalogue.items.map((item) => {
     const mark = marks[ids.get(item.sku)];
     if (!mark || !(Date.parse(mark.at) > sheetAt)) return item;
-    if (mark.status === 'out_of_stock') return { ...item, stock: 0, inStock: false };
-    if (mark.status === 'in_stock') return { ...item, stock: null, inStock: true }; // how many isn't known
+    const marked = { stockSource: 'owner', stockAsOf: mark.at };
+    if (mark.status === 'out_of_stock') return { ...item, ...marked, stock: 0, inStock: false, availability: 'Sold out' };
+    if (mark.status === 'in_stock') {
+      // How many isn't known; the sheet's own note stays unless it says the opposite
+      const availability = SOLD_OUT_TEXT.test(item.availability ?? '') ? 'In stock' : item.availability;
+      return { ...item, ...marked, stock: null, inStock: true, availability };
+    }
     return item;
   });
   return { ...project, catalogue: { ...project.catalogue, items } };
