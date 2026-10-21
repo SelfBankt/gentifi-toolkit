@@ -7,7 +7,7 @@ before=$(runuser -u gentifi -- git -C "$TOOLKIT" rev-parse --short HEAD)
 runuser -u gentifi -- git -C "$TOOLKIT" pull --ff-only -q
 after=$(runuser -u gentifi -- git -C "$TOOLKIT" rev-parse --short HEAD)
 # Refresh these helper commands too, replacing the files rather than writing into them
-for name in update stats backup; do
+for name in update stats backup check; do
   install -m 755 "$TOOLKIT/deploy/gentifi-$name.sh" "/usr/local/bin/gentifi-$name.new"
   mv -f "/usr/local/bin/gentifi-$name.new" "/usr/local/bin/gentifi-$name"
 done
