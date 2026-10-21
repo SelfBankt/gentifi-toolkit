@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHost } from '../src/lib/host.js';
 import { createStats } from '../src/lib/stats.js';
@@ -99,6 +99,144 @@ test('prepare_order links to a confirmation page; only Confirm records a witness
       assert.match(stale, /£3\.50/);
       assert.equal((await fetch(`${link.slice(0, -2)}xx`)).status, 404);
       assert.equal((await fetch(`${url}/o/${orderToken('test-secret', { ...order, items: [['NOPE', 1]], preparedAt: new Date().toISOString() })}`)).status, 409);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+/** A stand-in for the owner bot (gentifi-profile's relay/handoff.py). */
+async function fakeBot(dir) {
+  const secretFile = join(dir, 'handoff-secret');
+  await writeFile(secretFile, 'bot-secret\n');
+  const bot = { telegram: true, orders: [], state: null, calls: 0 };
+  const server = createServer(async (req, res) => {
+    bot.calls++;
+    const reply = (status, body) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    if (req.headers.authorization !== 'Bearer bot-secret') return reply(401, { error: 'not authorised' });
+    if (req.method === 'GET' && req.url === '/handoff/businesses/gtf_hollowlanefarmshop') return reply(200, { telegram: bot.telegram });
+    if (req.method === 'POST' && req.url === '/handoff/orders') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      bot.orders.push(JSON.parse(body));
+      if (bot.refuse) return reply(bot.refuse.status, bot.refuse.body);
+      bot.state = { status: 'pending_confirmation', reference: 'GTF-1A2B3C4D', confirm_by: '2026-10-15T13:00:00+00:00' };
+      return reply(200, bot.state);
+    }
+    if (req.method === 'GET' && req.url.startsWith('/handoff/orders/gtf_hollowlanefarmshop/')) return bot.state ? reply(200, bot.state) : reply(404, {});
+    return reply(404, {});
+  });
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  bot.env = { GENTIFI_BOT_URL: `http://127.0.0.1:${server.address().port}`, GENTIFI_BOT_SECRET_FILE: secretFile };
+  bot.close = () => server.close();
+  return bot;
+}
+
+test('owners on Telegram get the order there, and the page shows their answer', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'hollow-lane'));
+    await saveProject(join(dir, 'hollow-lane', 'gentifi.json'), demoProject());
+    const bot = await fakeBot(dir);
+    let host;
+    const server = createServer((req, res) => host.handle(req, res));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      host = createHost({ dir, baseUrl: url, env: { GENTIFI_ORDER_SECRET: 'test-secret', ...bot.env } });
+      await host.scan();
+      const profile = JSON.parse(await readFile(join(dir, 'hollow-lane', 'gentifi-profile.json'), 'utf8'));
+      assert.equal(profile.business.id, 'gtf_hollowlanefarmshop', 'the bot reads the business from its folder');
+
+      const token = orderToken('test-secret', { ...order, items: [['EGG-12', 2]], note: 'Brown eggs please', preparedAt: new Date().toISOString() });
+      const link = `${url}/o/${token}`;
+      const ref = orderRef(token);
+      const page = await (await fetch(link)).text();
+      assert.match(page, /<label for="name">Your name<\/label>/);
+      assert.match(page, /These go only to Hollow Lane Farm Shop/);
+      assert.match(page, /this page shows their answer/);
+
+      const form = (fields) => fetch(link, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString() });
+      const missing = await form({ name: 'Sam Carter', contact: ' ' });
+      assert.equal(missing.status, 400);
+      assert.match(await missing.text(), /Add your name and a phone number or email/);
+      assert.equal(bot.orders.length, 0);
+
+      assert.equal((await form({ name: 'Sam Carter', contact: '07700 900123' })).status, 303);
+      assert.equal(bot.orders.length, 1);
+      const sent = bot.orders[0];
+      assert.equal(sent.business_id, 'gtf_hollowlanefarmshop');
+      assert.equal(sent.ref, ref);
+      assert.deepEqual(sent.items, [{ offering_id: 'egg-12', quantity: 2 }]);
+      assert.deepEqual(sent.customer, { name: 'Sam Carter', contact: '07700 900123' });
+      assert.equal(sent.collection_date, 'Saturday');
+      assert.equal(sent.note, 'Brown eggs please');
+
+      const witness = JSON.parse((await readFile(join(dir, 'hollow-lane', 'witness.jsonl'), 'utf8')).trim());
+      assert.equal(witness.handedTo, 'telegram');
+      assert.doesNotMatch(JSON.stringify(witness), /Sam|07700/, 'Gentifi keeps no customer details');
+
+      const waiting = await (await fetch(link)).text();
+      assert.match(waiting, /Waiting for Hollow Lane Farm Shop to accept/);
+      assert.match(waiting, /They have until 14:00 to answer/);
+      assert.match(waiting, /<meta http-equiv="refresh" content="20">/);
+
+      bot.state = { status: 'confirmed', payment: { status: 'awaiting', checkout_url: 'lightning:lnbc10u1pfake' }, message: 'Confirmed. Pay using checkout_url.' };
+      const accepted = await (await fetch(link)).text();
+      assert.match(accepted, /Hollow Lane Farm Shop accepted your order/);
+      assert.match(accepted, /href="lightning:lnbc10u1pfake">Pay Hollow Lane Farm Shop/);
+      assert.doesNotMatch(accepted, /checkout_url/, 'agent wording stays out of the page');
+
+      bot.state = { status: 'declined', message: 'Hollow Lane Farm Shop can’t do the time asked but suggests Sunday instead. If that suits the customer, send a new request for that time.' };
+      const declined = await (await fetch(link)).text();
+      assert.match(declined, /can’t take this order/);
+      assert.match(declined, /suggests Sunday instead\./);
+      assert.doesNotMatch(declined, /send a new request/);
+      assert.match(declined, /href="mailto:orders%40hollowlane\.example/, 'the usual way to reach them');
+
+      bot.state = null;
+      assert.match(await (await fetch(link)).text(), /We can’t show Hollow Lane Farm Shop’s answer right now/);
+    } finally {
+      server.close();
+      bot.close();
+    }
+  });
+});
+
+test('without Telegram, or when the bot is down, orders go by email as before', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'hollow-lane'));
+    await saveProject(join(dir, 'hollow-lane', 'gentifi.json'), demoProject());
+    const bot = await fakeBot(dir);
+    bot.telegram = false;
+    let host;
+    const server = createServer((req, res) => host.handle(req, res));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      host = createHost({ dir, baseUrl: url, env: { GENTIFI_ORDER_SECRET: 'test-secret', ...bot.env } });
+      await host.scan();
+      const token = orderToken('test-secret', { ...order, preparedAt: new Date().toISOString() });
+      const link = `${url}/o/${token}`;
+      assert.doesNotMatch(await (await fetch(link)).text(), /Your name/);
+      await fetch(link, { method: 'POST', redirect: 'manual' });
+      assert.equal(bot.orders.length, 0);
+      assert.match(await (await fetch(link)).text(), /One more step: send the reservation request/);
+
+      // The bot refuses the order (an error, or an old bot answering "failed"): hand over as before
+      bot.telegram = true;
+      for (const [i, refuse] of [{ status: 422, body: { error: 'refused' } }, { status: 200, body: { status: 'failed', message: 'refused' } }].entries()) {
+        bot.refuse = refuse;
+        const refused = `${url}/o/${orderToken('test-secret', { ...order, items: [['VEG-BOX', i + 1]], preparedAt: new Date().toISOString() })}`;
+        await fetch(refused, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'name=Sam&contact=07700%20900123' });
+        assert.match(await (await fetch(refused)).text(), /One more step: send the reservation request/, `refused with ${refuse.status}`);
+      }
+
+      bot.close();
+      const other = `${url}/o/${orderToken('test-secret', { ...order, items: [['BRD-SD', 1]], preparedAt: new Date().toISOString() })}`;
+      bot.telegram = true;
+      assert.doesNotMatch(await (await fetch(other)).text(), /Your name/, 'an unreachable bot never blocks an order');
+      await fetch(other, { method: 'POST', redirect: 'manual' });
+      assert.match(await (await fetch(other)).text(), /One more step: send the reservation request/);
     } finally {
       server.close();
     }
