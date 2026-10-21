@@ -43,6 +43,7 @@ Set up https://raw.githubusercontent.com/SelfBankt/gentifi-toolkit/main/SKILL.md
 ## Commands
 
 ```bash
+gentifi draft --photo board.jpg  # draft catalogue.csv from a photo of a price board or menu, to check
 gentifi init --from csv --file <path or URL> --name "…"   # import a catalogue, create gentifi.json
 gentifi sync                    # refresh prices and stock from the same spreadsheet
 gentifi check                   # the Gentified test: can agents find and buy?
@@ -89,6 +90,15 @@ Pass the system's own product export with `--from` and `--file`; nothing needs a
 | `woocommerce` | Products > All Products > Export | Simple products and variations (named from the parent); the sale price when set; private and draft products left out |
 
 A `csv` source that turns out to be one of these exports is read as that export, so a shop can hand over whatever file it has. `gentifi sync` and the host's ten-minute re-read work the same way when `--file` is a link.
+
+### From a photo of a price board or menu
+
+`gentifi draft --photo board.jpg [--photo page2.jpg] [--out folder]` sends up to five photos of one board or menu to an AI model that reads images, and writes a draft for a person to check before anything is used:
+
+- `catalogue.csv`, in the columns above, ready for `gentifi init --from csv`. A **check** column flags anything doubtful: words the model wasn't sure of, a missing or odd price, a repeated name. A price it couldn't read is left blank, never guessed, so `init` leaves that row out until someone adds it.
+- `notes.md`: business details the photo shows (name, hours, phone…), parts it couldn't read, and the `gentifi init` command with those details filled in, to confirm with the business first.
+
+It works with any OpenAI-compatible chat completions API that takes images: `GENTIFI_AI_URL` (default OpenCode Go, `https://opencode.ai/inference/go/openai/v1`), `GENTIFI_AI_MODEL` or `--model`, and the key in `GENTIFI_AI_KEY` or the file `~/.gentifi/ai-key` (one line, readable only by you). The photos go to that service to be read. iPhone HEIC photos need converting to JPEG first (`sips -s format jpeg photo.heic --out photo.jpg` on a Mac).
 
 ## What it generates
 
