@@ -149,6 +149,8 @@ On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, i
 - After Confirm, the page shows the owner's answer: waiting (it refreshes itself), accepted (with a payment link or Lightning invoice from the business's own wallet, if it has one), or declined, expired or cancelled, with the business's usual contact details.
 - If the bot is off, unreachable or slow, or the owner isn't linked, the page works as before.
 
+**Onboarding.** With `GENTIFI_ONBOARDING_FILE` (the bot's `onboarding.json`), businesses the bot is still onboarding are loaded and get their `gentifi-profile.json`, but are hidden from the network connector, events, `/ask`, their `/b/` page and order links until their owner checks the listing in Telegram and taps Go live. The host rereads the list within 5 seconds of a change; if it can't be read, the last list stands. For a new business, run the bot's `invite --onboard` before copying its folder in.
+
 `gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses

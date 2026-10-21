@@ -27,6 +27,11 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * With the owner bot on (bot.js), each business's folder also gets a
  * gentifi-profile.json for the bot to read, rewritten when the business changes,
  * and orders for owners on Telegram go to them there.
+ *
+ * Businesses the bot is still onboarding (GENTIFI_ONBOARDING_FILE, the bot's
+ * onboarding.json) are loaded but hidden from customers' agents, pages and order
+ * links until their owner checks the listing and goes live. If the file can't be
+ * read, the last list read stands, so a hidden business never shows by accident.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -36,10 +41,15 @@ const sendText = (res, status, text, headers = {}) => {
   res.end(text);
 };
 
-export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env }) {
+export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env, onboardingCheckMs = 5000 }) {
   const base = baseUrl.replace(/\/+$/, '');
-  const businesses = new Map();
+  const mounted = new Map(); // every business loaded from the folder
+  const businesses = new Map(); // the ones customers' agents can see: mounted, less those onboarding
   let secret = null;
+  const onboardingFile = env.GENTIFI_ONBOARDING_FILE ?? '';
+  let onboarding = new Set();
+  let onboardingMtime = null;
+  let onboardingCheckedAt = 0;
   const bot = createBot({ env, log });
 
   async function mount(slug, path, project, mtimeMs) {
@@ -51,7 +61,8 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     })}`;
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls'), confirmLink });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name });
+    mounted.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name, profileId: businessProfile(project).business.id });
+    showVisible();
     if (bot) await writeProfile(slug, project).catch((e) => log(`[${slug}] Couldn't write gentifi-profile.json: ${e.message}`));
   }
 
@@ -62,6 +73,42 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (await readFile(file, 'utf8').catch(() => '') === json) return;
     await writeFile(`${file}.tmp`, json);
     await rename(`${file}.tmp`, file); // the bot never reads half a file
+  }
+
+  /** Re-reads the bot's onboarding list if it changed (at most every 5 seconds unless forced). True if it did. */
+  async function refreshOnboarding(force = false) {
+    if (!onboardingFile || (!force && Date.now() - onboardingCheckedAt < onboardingCheckMs)) return false;
+    onboardingCheckedAt = Date.now();
+    let info;
+    try {
+      info = await stat(onboardingFile);
+    } catch {
+      return false; // not there (yet): keep the last list
+    }
+    if (info.mtimeMs === onboardingMtime) return false;
+    try {
+      const ids = JSON.parse(await readFile(onboardingFile, 'utf8')).onboarding;
+      if (!Array.isArray(ids)) throw new Error('no "onboarding" list');
+      onboarding = new Set(ids.map(String));
+      onboardingMtime = info.mtimeMs;
+      return true;
+    } catch (e) {
+      log(`Couldn't read ${onboardingFile}, keeping the last list: ${e.message}`);
+      return false;
+    }
+  }
+
+  /** Rebuilds the visible list in place (the network connector, events and pages all read it). */
+  function showVisible() {
+    const before = new Set(businesses.keys());
+    businesses.clear();
+    for (const [slug, b] of mounted) {
+      if (onboarding.has(b.profileId)) {
+        if (before.has(slug)) log(`Hidden while its owner checks the listing: ${slug}`);
+      } else {
+        businesses.set(slug, b);
+      }
+    }
   }
 
   /** Does this order go to the owner in Telegram? Only for businesses that take reservations. */
@@ -106,6 +153,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   /** Loads new or changed businesses and drops removed ones. One broken business never stops the others. */
   async function scan() {
     secret ??= await orderSecret(dir, env);
+    await refreshOnboarding(true); // before loading anything, so a new business never shows early
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -124,7 +172,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
         continue;
       }
       seen.add(entry.name);
-      const current = businesses.get(entry.name);
+      const current = mounted.get(entry.name);
       if (current && current.mtimeMs === info.mtimeMs) continue;
       try {
         await mount(entry.name, path, await loadProject(path), info.mtimeMs);
@@ -133,18 +181,19 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
         log(`Skipped ${entry.name}: ${e instanceof ProjectError ? e.message : e.stack ?? e.message}`);
       }
     }
-    for (const slug of [...businesses.keys()]) {
+    for (const slug of [...mounted.keys()]) {
       if (!seen.has(slug)) {
-        businesses.delete(slug);
+        mounted.delete(slug);
         log(`Removed ${slug}`);
       }
     }
+    showVisible();
     await loadAllEvents();
   }
 
   /** Re-reads each business's online sheet and saves any changes. */
   async function syncAll() {
-    for (const b of businesses.values()) {
+    for (const b of mounted.values()) {
       const source = b.project.catalogue?.source;
       if (!source?.type || !/^https?:\/\//.test(source.file ?? '')) continue;
       try {
@@ -268,6 +317,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   }
 
   async function handle(req, res) {
+    if (await refreshOnboarding()) showVisible();
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -327,5 +377,5 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     return business.handler(req, res);
   }
 
-  return { scan, syncAll, handle, businesses, get events() { return events; }, baseUrl: base };
+  return { scan, syncAll, handle, businesses, mounted, get events() { return events; }, baseUrl: base };
 }

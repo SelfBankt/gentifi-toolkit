@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHost } from '../src/lib/host.js';
 import { createStats } from '../src/lib/stats.js';
@@ -237,6 +237,56 @@ test('without Telegram, or when the bot is down, orders go by email as before', 
       assert.doesNotMatch(await (await fetch(other)).text(), /Your name/, 'an unreachable bot never blocks an order');
       await fetch(other, { method: 'POST', redirect: 'manual' });
       assert.match(await (await fetch(other)).text(), /One more step: send the reservation request/);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('a business the bot is still onboarding stays hidden until its owner goes live', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'hollow-lane'));
+    await saveProject(join(dir, 'hollow-lane', 'gentifi.json'), demoProject());
+    const list = join(dir, 'onboarding.json');
+    let tick = 0;
+    const setList = async (ids) => {
+      await writeFile(list, JSON.stringify({ onboarding: ids }));
+      const t = new Date(Date.now() + 1000 * ++tick);
+      await utimes(list, t, t); // a new modification time, as each rewrite has
+    };
+    await setList(['gtf_hollowlanefarmshop']);
+    let host;
+    const server = createServer((req, res) => host.handle(req, res));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      host = createHost({ dir, baseUrl: url, onboardingCheckMs: 0,
+        env: { GENTIFI_ORDER_SECRET: 'test-secret', GENTIFI_ONBOARDING_FILE: list, GENTIFI_BOT_URL: 'http://127.0.0.1:9', GENTIFI_BOT_SECRET_FILE: join(dir, 'none') } });
+      await host.scan();
+      assert.equal(host.mounted.size, 1);
+      assert.equal(JSON.parse(await readFile(join(dir, 'hollow-lane', 'gentifi-profile.json'), 'utf8')).business.id, 'gtf_hollowlanefarmshop',
+        'the bot still gets it, to show the owner');
+
+      const client = new McpHttpClient(`${url}/mcp`);
+      await client.connect();
+      const found = async () => {
+        const r = await client.request('tools/call', { name: 'find_businesses', arguments: { query: '' } });
+        return JSON.stringify(r.structuredContent ?? r.content);
+      };
+      const link = `${url}/o/${orderToken('test-secret', { ...order, preparedAt: new Date().toISOString() })}`;
+      assert.doesNotMatch(await found(), /Hollow Lane/, 'agents can’t find it');
+      assert.equal((await fetch(`${url}/b/hollow-lane/`)).status, 404, 'no page yet');
+      assert.equal((await fetch(link)).status, 404, 'no orders yet');
+      assert.deepEqual(await (await fetch(`${url}/healthz`)).json(), { ok: true, businesses: 0 });
+
+      await writeFile(list, '{"onboarding": [');
+      await utimes(list, new Date(Date.now() + 1e6), new Date(Date.now() + 1e6));
+      assert.doesNotMatch(await found(), /Hollow Lane/, 'a broken list keeps the last one');
+
+      await setList([]); // the owner tapped Go live
+      assert.match(await found(), /Hollow Lane/);
+      assert.equal((await fetch(`${url}/b/hollow-lane/`)).status, 200);
+      assert.equal((await fetch(link)).status, 200);
     } finally {
       server.close();
     }

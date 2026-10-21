@@ -11,6 +11,8 @@ WorkingDirectory=/srv/gentifi/toolkit
 # linked in Telegram go to them there. Harmless if the bot isn't installed.
 Environment=GENTIFI_BOT_URL=http://127.0.0.1:8765
 Environment=GENTIFI_BOT_SECRET_FILE=/var/lib/gentifi-bot/handoff-secret
+# Businesses the bot is still onboarding: hidden here until their owner goes live
+Environment=GENTIFI_ONBOARDING_FILE=/var/lib/gentifi-bot/onboarding.json
 ExecStart=/usr/bin/node bin/gentifi.js host --dir /srv/gentifi/businesses --base-url https://mcp.gentifi.com --port 8787
 Restart=on-failure
 RestartSec=5
