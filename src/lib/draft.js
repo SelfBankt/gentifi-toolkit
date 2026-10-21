@@ -42,7 +42,8 @@ Rules:
 - price: the price in pounds as a number (3.5 for £3.50). "From £8" or "£8+" goes in price_from instead. If there's no price, or you can't read it with certainty, use null and say why in "unsure". Never guess or work out a price.
 - unit: what the price is for, as shown ("dozen", "kg", "each", "per person"); blank if not shown.
 - category: the board's own heading for the item if it has one; otherwise blank.
-- description, allergens, dietary (e.g. "vegan", "gluten-free") and notice (e.g. "order 48 hours ahead"): only what's written.
+- description: what's written about the item, including options such as "sliced or unsliced".
+- allergens, dietary (e.g. "vegan", "gluten-free") and notice (only how far ahead to order, e.g. "order 48 hours ahead"): only what's written.
 - unsure: anything you're not sure of about this item (a smudged letter, a price that could be 3.50 or 8.50); blank if sure.
 - business: only details actually shown, such as the shop's name, opening hours ("Mo-Fr 09:00-17:00" style), phone, email, website, address. Leave the rest blank.
 - unreadable: parts of the photo you couldn't read, in a few words each.
