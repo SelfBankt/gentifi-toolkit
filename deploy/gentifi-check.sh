@@ -2,6 +2,8 @@
 # The daily check: is everything running, did anything go wrong in the last day, are any
 # orders waiting for an owner, are the backups fresh, and the counts. Changes nothing.
 # Installed as /usr/local/bin/gentifi-check by install-tools.sh. Run as root: gentifi-check
+# With --telegram it also sends a summary to Gentifi's team chats (gentifi-bot team), never to
+# owners; gentifi-check.timer does that every morning.
 set -uo pipefail
 export TZ=Europe/London  # times as the shops see them
 BOT_DB=${GENTIFI_RELAY_DB:-/var/lib/gentifi-bot/relay.db}
@@ -11,6 +13,7 @@ ok() { printf '  ✓ %s\n' "$1"; }
 bad() { printf '  ✗ %s\n' "$1"; problems=$((problems + 1)); }
 note() { printf '    %s\n' "$1"; }
 
+report() {
 echo "Gentifi daily check, $(date '+%a %-d %b %Y %H:%M')"
 
 echo
@@ -111,4 +114,53 @@ if [ "$problems" -eq 0 ]; then
 else
   echo "$problems thing(s) to look at (marked ✗)."
 fi
-exit 0
+}
+
+if [ "${1:-}" != "--telegram" ]; then
+  report
+  exit 0
+fi
+REPORT=$(report)
+printf '%s\n' "$REPORT"
+# The bot's token is read here, inside Python, and never printed or put on a command line
+REPORT=$REPORT python3 - "$BOT_DB" /etc/gentifi-bot/.env <<'PY'
+import json, os, sqlite3, sys, urllib.request
+from itertools import takewhile
+
+lines = os.environ["REPORT"].splitlines()
+out = [lines[0]]
+problems = [l.strip() for l in lines if l.startswith("  ✗")]
+out += [lines[-1] if problems else "✓ All good."] + problems
+for i, l in enumerate(lines):
+    if "waiting for an owner" in l or "accepted, not yet" in l:
+        out.append(l.strip().lstrip("✓!· ").strip())
+        out += ["   " + d.strip() for d in takewhile(lambda d: d.startswith("      "), lines[i + 1:])]
+head = next((i for i, l in enumerate(lines) if l.strip().startswith("Business")), None)
+if head is not None:
+    out.append("Last 2 days:")
+    for l in lines[head + 1:]:
+        parts = l.split()
+        if len(parts) >= 5 and all(p.isdigit() for p in parts[-4:]):
+            opened, asked, searches, orders = parts[-4:]
+            out.append(f"   {' '.join(parts[:-4])}: {asked} AI questions, {searches} searches, "
+                       f"{orders} orders, {opened} page opens")
+out.append("Full report: gentifi-check on the VPS.")
+text = "\n".join(out)[:4000]
+if os.environ.get("GENTIFI_CHECK_DRY_RUN"):  # show the message instead of sending it
+    sys.exit(print(text))
+
+token = next((l.split("=", 1)[1].strip().strip('"') for l in open(sys.argv[2]) if l.startswith("TELEGRAM_BOT_TOKEN=")), "")
+db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+chats = [r[0] for r in db.execute("SELECT chat_id FROM team")]
+if not token or not chats:
+    sys.exit("Not sent: " + ("no bot token" if not token else "no team chat linked (gentifi-bot team)"))
+for chat in chats:
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage",
+                                 data=json.dumps({"chat_id": chat, "text": text}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+        print(f"Sent to team chat {chat}.")
+    except Exception as exc:  # never print the request: its URL holds the token
+        print(f"Couldn't send to team chat {chat}: {getattr(exc, 'code', '') or type(exc).__name__}", file=sys.stderr)
+PY
