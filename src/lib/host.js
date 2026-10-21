@@ -1,5 +1,5 @@
 import { readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
 import { ToolError, businessTools, customerHandoff, priceOrder } from '../mcp/tools.js';
@@ -14,7 +14,7 @@ import { badgeSvg, counterCardSvg, signsHtml } from './badge.js';
 import { businessServer } from '../commands/serve.js';
 import { diffItems } from '../commands/sync.js';
 import { readSource } from './catalogue.js';
-import { ProjectError, loadProject, saveProject } from './project.js';
+import { ProjectError, loadProject, saveProject, toMinor } from './project.js';
 
 /**
  * Hosts many businesses from one process. Each business is a folder in `dir`
@@ -37,6 +37,11 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * bot's stock.json) is shown to customers' agents over the sheet, unless the sheet
  * was read again after the mark. The saved project and the bot's profile keep the
  * sheet's own stock.
+ *
+ * Prices and descriptions owners change in Telegram (GENTIFI_EDITS_FILE, the bot's
+ * edits.json; by default next to the stock file) are shown the same way, each until
+ * the sheet changes that same field. Prices as of moves to the latest edit, so order
+ * links made before it say prices have changed.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -95,6 +100,34 @@ export function withOwnerStock(project, marks = {}) {
   return { ...project, catalogue: { ...project.catalogue, items } };
 }
 
+const sheetPrice = (item) => (item.price != null ? toMinor(item.price) : item.priceFrom != null ? toMinor(item.priceFrom) : null);
+
+/**
+ * The project with the owner's edits from Telegram (by offering id: { price, description },
+ * each { value, sheet, at }), each while the sheet still says what it said when edited.
+ * Prices are in minor units. The catalogue's updatedAt moves to the latest edit applied.
+ */
+export function withOwnerEdits(project, edits = {}) {
+  const ids = offeringIds(project.catalogue.items);
+  let latest = Date.parse(project.catalogue.updatedAt ?? '') || 0;
+  const items = project.catalogue.items.map((item) => {
+    const edit = edits[ids.get(item.sku)];
+    let out = item;
+    if (edit?.price && sheetPrice(item) === edit.price.sheet) {
+      const amount = edit.price.value / 100;
+      out = item.price == null && item.priceFrom != null ? { ...out, priceFrom: amount } : { ...out, price: amount, priceFrom: null };
+      latest = Math.max(latest, Date.parse(edit.price.at) || 0);
+    }
+    if (edit?.description && (item.description || '') === edit.description.sheet) {
+      out = { ...out, description: edit.description.value };
+      latest = Math.max(latest, Date.parse(edit.description.at) || 0);
+    }
+    return out;
+  });
+  const updatedAt = latest > (Date.parse(project.catalogue.updatedAt ?? '') || 0) ? new Date(latest).toISOString() : project.catalogue.updatedAt;
+  return { ...project, catalogue: { ...project.catalogue, items, updatedAt } };
+}
+
 export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env, botCheckMs = 5000 }) {
   const base = baseUrl.replace(/\/+$/, '');
   const mounted = new Map(); // every business loaded from the folder
@@ -102,6 +135,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   let secret = null;
   let onboarding = new Set();
   let stock = {}; // owners' marks by business profile id
+  let edits = {}; // owners' price and description edits, the same way
   const readOnboarding = botFile(env.GENTIFI_ONBOARDING_FILE ?? '', (doc) => {
     if (!Array.isArray(doc.onboarding)) throw new Error('no "onboarding" list');
     return new Set(doc.onboarding.map(String));
@@ -110,12 +144,18 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     if (!doc.stock || typeof doc.stock !== 'object') throw new Error('no "stock" marks');
     return doc.stock;
   }, log, botCheckMs);
+  const editsFile = env.GENTIFI_EDITS_FILE ?? (env.GENTIFI_STOCK_FILE ? join(dirname(env.GENTIFI_STOCK_FILE), 'edits.json') : '');
+  const readEdits = botFile(editsFile, (doc) => {
+    if (!doc.edits || typeof doc.edits !== 'object') throw new Error('no "edits"');
+    return doc.edits;
+  }, log, botCheckMs);
   const bot = createBot({ env, log });
 
   async function mount(slug, path, sheet, mtimeMs) {
     const profileId = businessProfile(sheet).business.id;
-    const marks = stock[profileId] ?? {};
-    const project = withOwnerStock(sheet, marks);
+    const owner = { marks: stock[profileId] ?? {}, edits: edits[profileId] ?? {} };
+    // Stock first: its marks are weighed against when the sheet itself was read
+    const project = withOwnerEdits(withOwnerStock(sheet, owner.marks), owner.edits);
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
     // The order rides in the signed link, so preparing one stores nothing
@@ -124,7 +164,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     })}`;
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls'), confirmLink });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    mounted.set(slug, { slug, path, project, sheet, marks: JSON.stringify(marks), handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name, profileId });
+    mounted.set(slug, { slug, path, project, sheet, owner: JSON.stringify(owner), handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name, profileId });
     showVisible();
     if (bot) await writeProfile(slug, sheet).catch((e) => log(`[${slug}] Couldn't write gentifi-profile.json: ${e.message}`));
   }
@@ -138,7 +178,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     await rename(`${file}.tmp`, file); // the bot never reads half a file
   }
 
-  /** Re-reads the bot's onboarding list and stock marks if they changed (at most every 5 seconds unless forced). */
+  /** Re-reads the bot's onboarding list, stock marks and edits if they changed (at most every 5 seconds unless forced). */
   async function refreshBotFiles(force = false) {
     const list = await readOnboarding(force);
     if (list) {
@@ -146,15 +186,17 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       showVisible();
     }
     const marks = await readStock(force);
-    if (!marks) return;
-    stock = marks;
+    const changes = await readEdits(force);
+    if (!marks && !changes) return;
+    stock = marks ?? stock;
+    edits = changes ?? edits;
     for (const b of [...mounted.values()]) {
-      if (JSON.stringify(stock[b.profileId] ?? {}) === b.marks) continue;
+      if (JSON.stringify({ marks: stock[b.profileId] ?? {}, edits: edits[b.profileId] ?? {} }) === b.owner) continue;
       try {
         await mount(b.slug, b.path, b.sheet, b.mtimeMs);
-        log(`[${b.slug}] Stock updated from its owner`);
+        log(`[${b.slug}] Updated from its owner in Telegram`);
       } catch (e) {
-        log(`[${b.slug}] Couldn't update stock from its owner: ${e.message}`);
+        log(`[${b.slug}] Couldn't update from its owner: ${e.message}`);
       }
     }
   }

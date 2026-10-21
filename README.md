@@ -153,6 +153,8 @@ On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, i
 
 **Stock from the owner.** With `GENTIFI_STOCK_FILE` (the bot's `stock.json`), what an owner marks sold out or back in stock in Telegram (`/soldout`, `/instock`, or declining an order as sold out) is what customers' agents see, within 5 seconds: in search, availability, prepared orders and `/ask`. A mark gives way when the sheet is read again after it. The saved `gentifi.json` and the bot's `gentifi-profile.json` keep the sheet's own stock.
 
+**Prices and descriptions from the owner.** With `GENTIFI_EDITS_FILE` (the bot's `edits.json`; by default next to `GENTIFI_STOCK_FILE`), what an owner changes with `/edit` in Telegram is what customers' agents see, within 5 seconds, until the sheet changes that same field. The catalogue's prices-as-of time moves to the latest edit, so an order link made before it says prices have changed. The saved project and `gentifi-profile.json` keep the sheet's own values.
+
 `gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses
