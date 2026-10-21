@@ -176,7 +176,7 @@ Each business is served under `/b/<slug>/`: its scan-to-add page, discovery file
 
 `deploy/` sets this up on an Ubuntu or Debian VPS: `setup-vps.sh` installs Node.js and Caddy (which handles HTTPS), and runs the host as a locked-down systemd service.
 
-On a VPS that's already set up, `deploy/install-tools.sh` adds four commands and touches nothing else: `gentifi-update` (pull the latest toolkit, restart the host and check it's healthy), `gentifi-stats` (the anonymous counts), `gentifi-backup` (a copy of the businesses folder, also made nightly by a systemd timer and kept for 14 days in `/srv/gentifi/backups`) and `gentifi-check` (the daily check: services running, problems in the last day's logs, orders waiting for an owner, fresh backups, disk and counts; it changes nothing).
+On a VPS that's already set up, `deploy/install-tools.sh` adds four commands and touches nothing else: `gentifi-update` (pull the latest toolkit, restart the host and check it's healthy), `gentifi-stats` (the anonymous counts), `gentifi-backup` (a copy of the businesses folder, also made nightly by a systemd timer and kept for 14 days in `/srv/gentifi/backups`) and `gentifi-check` (the daily check: services running, problems in the last day's logs, orders waiting for an owner, fresh backups, disk and counts; it changes nothing). A timer sends its summary to Gentifi's team chat in Telegram (`gentifi-bot team`, never to owners) every morning at 7.30; `gentifi-check --telegram` sends it now.
 
 ## Payments through the agent (prototype)
 
