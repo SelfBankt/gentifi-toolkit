@@ -32,6 +32,11 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * onboarding.json) are loaded but hidden from customers' agents, pages and order
  * links until their owner checks the listing and goes live. If the file can't be
  * read, the last list read stands, so a hidden business never shows by accident.
+ *
+ * What owners mark sold out or back in stock in Telegram (GENTIFI_STOCK_FILE, the
+ * bot's stock.json) is shown to customers' agents over the sheet, unless the sheet
+ * was read again after the mark. The saved project and the bot's profile keep the
+ * sheet's own stock.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -41,18 +46,69 @@ const sendText = (res, status, text, headers = {}) => {
   res.end(text);
 };
 
-export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env, onboardingCheckMs = 5000 }) {
+/** A bot file (JSON), read again when it changes. `read()` gives its new contents, or undefined if unchanged or unreadable. */
+function botFile(file, parse, log, checkMs) {
+  let mtime = null;
+  let checkedAt = 0;
+  return async function read(force = false) {
+    if (!file || (!force && Date.now() - checkedAt < checkMs)) return undefined;
+    checkedAt = Date.now();
+    let info;
+    try {
+      info = await stat(file);
+    } catch {
+      return undefined; // not there (yet): keep the last one
+    }
+    if (info.mtimeMs === mtime) return undefined;
+    try {
+      const value = parse(JSON.parse(await readFile(file, 'utf8')));
+      mtime = info.mtimeMs;
+      return value;
+    } catch (e) {
+      log(`Couldn't read ${file}, keeping the last one: ${e.message}`);
+      return undefined;
+    }
+  };
+}
+
+/**
+ * The project as customers' agents see it: the owner's marks from Telegram (by offering
+ * id: { status, at }) over the sheet's stock, where they're newer than the sheet.
+ */
+export function withOwnerStock(project, marks = {}) {
+  const ids = offeringIds(project.catalogue.items);
+  const sheetAt = Date.parse(project.catalogue.updatedAt ?? '') || 0;
+  const items = project.catalogue.items.map((item) => {
+    const mark = marks[ids.get(item.sku)];
+    if (!mark || !(Date.parse(mark.at) > sheetAt)) return item;
+    if (mark.status === 'out_of_stock') return { ...item, stock: 0, inStock: false };
+    if (mark.status === 'in_stock') return { ...item, stock: null, inStock: true }; // how many isn't known
+    return item;
+  });
+  return { ...project, catalogue: { ...project.catalogue, items } };
+}
+
+export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThis.fetch, stats = null, env = process.env, botCheckMs = 5000 }) {
   const base = baseUrl.replace(/\/+$/, '');
   const mounted = new Map(); // every business loaded from the folder
   const businesses = new Map(); // the ones customers' agents can see: mounted, less those onboarding
   let secret = null;
-  const onboardingFile = env.GENTIFI_ONBOARDING_FILE ?? '';
   let onboarding = new Set();
-  let onboardingMtime = null;
-  let onboardingCheckedAt = 0;
+  let stock = {}; // owners' marks by business profile id
+  const readOnboarding = botFile(env.GENTIFI_ONBOARDING_FILE ?? '', (doc) => {
+    if (!Array.isArray(doc.onboarding)) throw new Error('no "onboarding" list');
+    return new Set(doc.onboarding.map(String));
+  }, log, botCheckMs);
+  const readStock = botFile(env.GENTIFI_STOCK_FILE ?? '', (doc) => {
+    if (!doc.stock || typeof doc.stock !== 'object') throw new Error('no "stock" marks');
+    return doc.stock;
+  }, log, botCheckMs);
   const bot = createBot({ env, log });
 
-  async function mount(slug, path, project, mtimeMs) {
+  async function mount(slug, path, sheet, mtimeMs) {
+    const profileId = businessProfile(sheet).business.id;
+    const marks = stock[profileId] ?? {};
+    const project = withOwnerStock(sheet, marks);
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
     // The order rides in the signed link, so preparing one stores nothing
@@ -61,9 +117,9 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     })}`;
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls'), confirmLink });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
-    mounted.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name, profileId: businessProfile(project).business.id });
+    mounted.set(slug, { slug, path, project, sheet, marks: JSON.stringify(marks), handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name, profileId });
     showVisible();
-    if (bot) await writeProfile(slug, project).catch((e) => log(`[${slug}] Couldn't write gentifi-profile.json: ${e.message}`));
+    if (bot) await writeProfile(slug, sheet).catch((e) => log(`[${slug}] Couldn't write gentifi-profile.json: ${e.message}`));
   }
 
   /** The business as a Gentifi Business Profile, for the owner bot; only rewritten when it changes. */
@@ -75,26 +131,24 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     await rename(`${file}.tmp`, file); // the bot never reads half a file
   }
 
-  /** Re-reads the bot's onboarding list if it changed (at most every 5 seconds unless forced). True if it did. */
-  async function refreshOnboarding(force = false) {
-    if (!onboardingFile || (!force && Date.now() - onboardingCheckedAt < onboardingCheckMs)) return false;
-    onboardingCheckedAt = Date.now();
-    let info;
-    try {
-      info = await stat(onboardingFile);
-    } catch {
-      return false; // not there (yet): keep the last list
+  /** Re-reads the bot's onboarding list and stock marks if they changed (at most every 5 seconds unless forced). */
+  async function refreshBotFiles(force = false) {
+    const list = await readOnboarding(force);
+    if (list) {
+      onboarding = list;
+      showVisible();
     }
-    if (info.mtimeMs === onboardingMtime) return false;
-    try {
-      const ids = JSON.parse(await readFile(onboardingFile, 'utf8')).onboarding;
-      if (!Array.isArray(ids)) throw new Error('no "onboarding" list');
-      onboarding = new Set(ids.map(String));
-      onboardingMtime = info.mtimeMs;
-      return true;
-    } catch (e) {
-      log(`Couldn't read ${onboardingFile}, keeping the last list: ${e.message}`);
-      return false;
+    const marks = await readStock(force);
+    if (!marks) return;
+    stock = marks;
+    for (const b of [...mounted.values()]) {
+      if (JSON.stringify(stock[b.profileId] ?? {}) === b.marks) continue;
+      try {
+        await mount(b.slug, b.path, b.sheet, b.mtimeMs);
+        log(`[${b.slug}] Stock updated from its owner`);
+      } catch (e) {
+        log(`[${b.slug}] Couldn't update stock from its owner: ${e.message}`);
+      }
     }
   }
 
@@ -153,7 +207,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   /** Loads new or changed businesses and drops removed ones. One broken business never stops the others. */
   async function scan() {
     secret ??= await orderSecret(dir, env);
-    await refreshOnboarding(true); // before loading anything, so a new business never shows early
+    await refreshBotFiles(true); // before loading anything, so a new business never shows early
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -202,9 +256,9 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
           log(`[${b.slug}] Sheet has no usable items; kept the last good catalogue`);
           continue;
         }
-        const changes = diffItems(b.project.catalogue.items, imported.items);
+        const changes = diffItems(b.sheet.catalogue.items, imported.items);
         if (!changes.length) continue;
-        const project = { ...b.project, catalogue: { ...b.project.catalogue, items: imported.items, updatedAt: new Date().toISOString() } };
+        const project = { ...b.sheet, catalogue: { ...b.sheet.catalogue, items: imported.items, updatedAt: new Date().toISOString() } };
         await saveProject(b.path, project);
         const info = await stat(b.path);
         await mount(b.slug, b.path, project, info.mtimeMs);
@@ -317,7 +371,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   }
 
   async function handle(req, res) {
-    if (await refreshOnboarding()) showVisible();
+    await refreshBotFiles();
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });

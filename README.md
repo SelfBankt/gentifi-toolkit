@@ -151,6 +151,8 @@ On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, i
 
 **Onboarding.** With `GENTIFI_ONBOARDING_FILE` (the bot's `onboarding.json`), businesses the bot is still onboarding are loaded and get their `gentifi-profile.json`, but are hidden from the network connector, events, `/ask`, their `/b/` page and order links until their owner checks the listing in Telegram and taps Go live. The host rereads the list within 5 seconds of a change; if it can't be read, the last list stands. For a new business, run the bot's `invite --onboard` before copying its folder in.
 
+**Stock from the owner.** With `GENTIFI_STOCK_FILE` (the bot's `stock.json`), what an owner marks sold out or back in stock in Telegram (`/soldout`, `/instock`, or declining an order as sold out) is what customers' agents see, within 5 seconds: in search, availability, prepared orders and `/ask`. A mark gives way when the sheet is read again after it. The saved `gentifi.json` and the bot's `gentifi-profile.json` keep the sheet's own stock.
+
 `gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses
