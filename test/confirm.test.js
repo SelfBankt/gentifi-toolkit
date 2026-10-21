@@ -260,7 +260,7 @@ test('a business the bot is still onboarding stays hidden until its owner goes l
     await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
     const url = `http://127.0.0.1:${server.address().port}`;
     try {
-      host = createHost({ dir, baseUrl: url, onboardingCheckMs: 0,
+      host = createHost({ dir, baseUrl: url, botCheckMs: 0,
         env: { GENTIFI_ORDER_SECRET: 'test-secret', GENTIFI_ONBOARDING_FILE: list, GENTIFI_BOT_URL: 'http://127.0.0.1:9', GENTIFI_BOT_SECRET_FILE: join(dir, 'none') } });
       await host.scan();
       assert.equal(host.mounted.size, 1);
@@ -287,6 +287,52 @@ test('a business the bot is still onboarding stays hidden until its owner goes l
       assert.match(await found(), /Hollow Lane/);
       assert.equal((await fetch(`${url}/b/hollow-lane/`)).status, 200);
       assert.equal((await fetch(link)).status, 200);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('what the owner marks sold out in Telegram is what agents see, until the sheet is read again', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'hollow-lane'));
+    await saveProject(join(dir, 'hollow-lane', 'gentifi.json'), demoProject());
+    const file = join(dir, 'stock.json');
+    let tick = 0;
+    const setMarks = async (marks) => {
+      await writeFile(file, JSON.stringify({ stock: { gtf_hollowlanefarmshop: marks } }));
+      const t = new Date(Date.now() + 1000 * ++tick);
+      await utimes(file, t, t);
+    };
+    const later = new Date(Date.now() + 60_000).toISOString();
+    await setMarks({ 'egg-12': { status: 'out_of_stock', at: later } });
+    let host;
+    const server = createServer((req, res) => host.handle(req, res));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      host = createHost({ dir, baseUrl: url, botCheckMs: 0,
+        env: { GENTIFI_ORDER_SECRET: 'test-secret', GENTIFI_STOCK_FILE: file, GENTIFI_BOT_URL: 'http://127.0.0.1:9', GENTIFI_BOT_SECRET_FILE: join(dir, 'none') } });
+      await host.scan();
+      const client = new McpHttpClient(`${url}/mcp`);
+      await client.connect();
+      const available = async () => (await client.request('tools/call', {
+        name: 'check_availability', arguments: { business: 'hollow-lane', sku: 'EGG-12' } })).structuredContent.available;
+      assert.equal(await available(), false, 'sold out, as the owner said');
+      const saved = await loadProject(join(dir, 'hollow-lane', 'gentifi.json'));
+      assert.equal(saved.catalogue.items.find((i) => i.sku === 'EGG-12').stock, 40, 'the saved project keeps the sheet');
+      const profile = JSON.parse(await readFile(join(dir, 'hollow-lane', 'gentifi-profile.json'), 'utf8'));
+      assert.equal(profile.availability.find((r) => r.offering_id === 'egg-12').status, 'in_stock', 'so does the bot’s profile');
+
+      await setMarks({ 'egg-12': { status: 'in_stock', at: later } });
+      assert.equal(await available(), true, 'back in stock');
+
+      await setMarks({ 'egg-12': { status: 'out_of_stock', at: '2020-01-01T00:00:00Z' } });
+      assert.equal(await available(), true, 'a mark older than the sheet gives way to it');
+
+      await writeFile(file, '{"stock": ');
+      await utimes(file, new Date(Date.now() + 1e6), new Date(Date.now() + 1e6));
+      assert.equal(await available(), true, 'a broken file keeps the last marks');
     } finally {
       server.close();
     }
