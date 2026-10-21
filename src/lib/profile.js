@@ -45,6 +45,19 @@ export function openingHoursEntry(spec) {
 
 const offeringId = (sku) => String(sku).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').padEnd(3, '0').slice(0, 64);
 
+/** Each item's offering id in the profile, by SKU (SKUs that clean up the same get -2, -3...). */
+export function offeringIds(items) {
+  const ids = new Map();
+  const used = new Set();
+  for (const item of items) {
+    let id = offeringId(item.sku);
+    for (let n = 2; used.has(id); n++) id = `${offeringId(item.sku).slice(0, 60)}-${n}`;
+    used.add(id);
+    ids.set(item.sku, id);
+  }
+  return ids;
+}
+
 function price(item, currency) {
   const per = item.unit || undefined;
   if (item.price != null) return compact({ type: 'fixed', amount: { amount_minor: toMinor(item.price), currency }, per });
@@ -78,11 +91,9 @@ export function businessProfile(project) {
   const currency = b.currency || 'GBP';
   const asOf = project.catalogue.updatedAt;
   const freshness = { observed_at: asOf, confidence: 'likely', source: 'owner' };
-  const used = new Set();
+  const ids = offeringIds(project.catalogue.items);
   const offerings = project.catalogue.items.map((item) => {
-    let id = offeringId(item.sku);
-    for (let n = 2; used.has(id); n++) id = `${offeringId(item.sku).slice(0, 60)}-${n}`;
-    used.add(id);
+    const id = ids.get(item.sku);
     return {
       item,
       offering: compact({

@@ -7,6 +7,10 @@ Wants=network-online.target
 User=gentifi
 Group=gentifi
 WorkingDirectory=/srv/gentifi/toolkit
+# The owner bot on this machine (gentifi-profile's gentifi-bot service): orders for owners
+# linked in Telegram go to them there. Harmless if the bot isn't installed.
+Environment=GENTIFI_BOT_URL=http://127.0.0.1:8765
+Environment=GENTIFI_BOT_SECRET_FILE=/var/lib/gentifi-bot/handoff-secret
 ExecStart=/usr/bin/node bin/gentifi.js host --dir /srv/gentifi/businesses --base-url https://mcp.gentifi.com --port 8787
 Restart=on-failure
 RestartSec=5

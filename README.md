@@ -133,6 +133,12 @@ On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, i
 - Tapping **Confirm** appends one line to `<dir>/<slug>/witness.jsonl`: a reference, when it was prepared and confirmed, the items, prices and total, and the collection date. Nothing about who the customer is; a note is kept only as a hash. Confirming twice records once.
 - The page then shows the reference and hands the customer on to the business's own way of ordering: an email with the order and reference, its checkout or booking page, or its phone number.
 
+**Owners on Telegram.** With the owner bot from [gentifi-profile](https://github.com/SelfBankt/gentifi-profile) running on the same machine (set `GENTIFI_BOT_URL`, such as `http://127.0.0.1:8765`, and `GENTIFI_BOT_SECRET_FILE`, the bot's `handoff-secret`), the host writes a `gentifi-profile.json` into each business's folder for the bot, and orders for a business that takes reservations and whose owner is linked in Telegram go to the owner there:
+
+- The page also asks for the customer's name and a phone number or email. They go only to the owner's message; the witness record notes that the order was handed to Telegram, nothing about who it's for.
+- After Confirm, the page shows the owner's answer: waiting (it refreshes itself), accepted (with a payment link or Lightning invoice from the business's own wallet, if it has one), or declined, expired or cancelled, with the business's usual contact details.
+- If the bot is off, unreachable or slow, or the owner isn't linked, the page works as before.
+
 `gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
 
 ## Hosting many businesses

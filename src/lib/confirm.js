@@ -13,6 +13,11 @@ import { escapeXml as e } from './badge.js';
  * one line to <dir>/<slug>/witness.jsonl: what was agreed, at what price and
  * when. It holds nothing about who the customer is. The page then hands them
  * to the business's own email, checkout, booking page or phone, as before.
+ *
+ * When the business's owner answers orders in Telegram (see bot.js), the page
+ * also asks for the customer's name and a phone number or email, which go only
+ * to the owner's message; the order goes to the owner, and this page shows
+ * their answer instead of the hand-off.
  */
 
 export const LINK_DAYS = 7;
@@ -84,7 +89,7 @@ export async function findWitness(dir, slug, ref) {
 }
 
 /** Appends what the customer agreed to. The note is kept only as a hash: it may hold personal details. */
-export async function recordWitness(dir, slug, { ref, order, priced, currency, confirmedAt = new Date() }) {
+export async function recordWitness(dir, slug, { ref, order, priced, currency, handedTo = null, confirmedAt = new Date() }) {
   const record = {
     ref,
     confirmedAt: confirmedAt.toISOString(),
@@ -95,6 +100,7 @@ export async function recordWitness(dir, slug, { ref, order, priced, currency, c
     currency,
     collectionDate: order.collectionDate || null,
     noteSha256: order.note ? createHash('sha256').update(order.note).digest('hex') : null,
+    ...(handedTo ? { handedTo } : {}),
   };
   await appendFile(join(dir, slug, 'witness.jsonl'), `${JSON.stringify(record)}\n`);
   return record;
@@ -120,18 +126,22 @@ const STYLE = `
   .btn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 52px; border: 0; border-radius: 999px; background: var(--copper); color: var(--teal); font: inherit; font-weight: 700; font-size: 1.05rem; text-decoration: none; cursor: pointer; }
   .small { font-size: .85rem; color: var(--ink-muted); margin: 12px 0 0; }
   .ref { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-weight: 600; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input { width: 100%; min-height: 48px; padding: 10px 14px; border: 1px solid var(--ink-muted); border-radius: 12px; font: inherit; color: var(--teal); }
+  form .btn { margin-top: 20px; }
+  .problem { background: #FDEBDD; }
   footer { background: var(--teal); color: var(--muted); padding: 20px 0 28px; font-size: .85rem; }
   footer a { color: #fff; }
   :focus-visible { outline: 3px solid var(--copper); outline-offset: 2px; }
 `;
 
-function shell(title, header, body) {
+function shell(title, header, body, { refreshSeconds = 0 } = {}) {
   return `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
+<meta name="robots" content="noindex">${refreshSeconds ? `\n<meta http-equiv="refresh" content="${refreshSeconds}">` : ''}
 <title>${e(title)}</title>
 <style>${STYLE}</style>
 </head>
@@ -159,19 +169,31 @@ function meta(order, project) {
   return `<ul class="meta">${bits.join('')}</ul>`;
 }
 
-/** The page the link opens: the order at today's prices, and one Confirm button. */
-export function confirmPage({ project, order, priced, changed }) {
+/**
+ * The page the link opens: the order at today's prices, and one Confirm button.
+ * With askContact (the owner answers in Telegram), it also asks who the order is for.
+ */
+export function confirmPage({ project, order, priced, changed, askContact = false, problem = '', values = {} }) {
   const name = project.business.name;
   const warnings = [
     changed && `${name} has updated its catalogue since your AI prepared this. This is the order at today’s prices.`,
     ...priced.warnings,
   ].filter(Boolean);
+  const fields = askContact
+    ? `<label for="name">Your name</label><input id="name" name="name" autocomplete="name" maxlength="100" required value="${e(values.name ?? '')}">
+    <label for="contact">Phone number or email</label><input id="contact" name="contact" autocomplete="tel" maxlength="100" required value="${e(values.contact ?? '')}">
+    <p class="small">These go only to ${e(name)}, in the message asking them to accept your order.</p>`
+    : '';
+  const after = askContact
+    ? `Confirming sends your order to ${e(name)}. They accept it or suggest another time, and this page shows their answer.`
+    : `Confirming records what you agreed to. Next you send it to ${e(name)} or finish on their own checkout; they confirm it with you.`;
   return shell(`Confirm your order with ${name}`,
     `<p class="eyebrow">Check before you confirm</p><h1>Your order with ${e(name)}</h1><p class="lede">Your AI prepared this. Nothing has been ordered yet.</p>`,
     `${orderTable(priced)}${meta(order, project)}
     ${warnings.map((w) => `<p class="notice">${e(w)}</p>`).join('')}
-    <form method="post"><button class="btn" type="submit">Confirm</button></form>
-    <p class="small">Confirming records what you agreed to. Next you send it to ${e(name)} or finish on their own checkout; they confirm it with you. Not right? Close this page and ask your AI to change it.</p>`);
+    ${problem ? `<p class="notice problem" role="alert">${e(problem)}</p>` : ''}
+    <form method="post">${fields}<button class="btn" type="submit">Confirm</button></form>
+    <p class="small">${after} Not right? Close this page and ask your AI to change it.</p>`);
 }
 
 /** After Confirm: the reference, and the business's own way to finish. */
@@ -183,6 +205,50 @@ export function confirmedPage({ project, priced, ref, handoff, confirmedAt }) {
     `${orderTable(priced)}
     <div style="margin-top:24px">${button}</div>
     <p class="small">${e(handoff.customerText)}</p>`);
+}
+
+const LONDON_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+
+/**
+ * After Confirm, for an owner on Telegram: their answer, as the bot has it (null when
+ * the bot can't say). Waiting refreshes itself; anything but an acceptance offers the
+ * business's usual way to reach them.
+ */
+export function ownerAnswerPage({ project, priced, ref, state, handoff }) {
+  const name = project.business.name;
+  const reference = `Reference <span class="ref">${e(ref)}</span>.`;
+  const contact = handoff.url ? `<p><a class="btn" href="${e(handoff.url)}">${e(handoff.label)}</a></p>` : '';
+  const status = state?.status;
+  if (status === 'pending_confirmation') {
+    const until = state.confirm_by ? ` They have until ${e(LONDON_TIME.format(new Date(state.confirm_by)))} to answer.` : '';
+    return shell(`Waiting for ${name}`,
+      `<p class="eyebrow">&#10003; Sent to ${e(name)}</p><h1>Waiting for ${e(name)} to accept</h1><p class="lede">${reference}${until}</p>`,
+      `${orderTable(priced)}<p class="small">This page updates by itself. You can close it and come back to this link later.</p>`,
+      { refreshSeconds: 20 });
+  }
+  if (status === 'confirmed') {
+    // The bot's own message is worded for AI agents, so say it plainly here
+    const pay = state.payment ?? {};
+    const url = pay.status === 'awaiting' ? pay.checkout_url ?? '' : '';
+    const how = pay.status === 'paid' ? 'Paid. Thank you.'
+      : url.startsWith('lightning:') ? `Pay now by Lightning: the invoice goes straight to ${name}’s own wallet. You can also pay in person.`
+        : url ? `Pay now with ${name}’s own payment link, or pay in person.`
+          : `Pay ${name} when you collect.`;
+    return shell(`${name} accepted your order`,
+      `<p class="eyebrow">&#10003; Accepted</p><h1>${e(name)} accepted your order</h1><p class="lede">${reference}</p>`,
+      `${orderTable(priced)}<p class="notice">${e(how)}</p>${url ? `<p><a class="btn" href="${e(url)}">Pay ${e(name)}</a></p>` : ''}`);
+  }
+  // The first sentence is for the customer; any more is advice to their AI
+  const said = (state?.message ?? '').split(/(?<=\.)\s/)[0];
+  const [title, text] = {
+    declined: [`${name} can’t take this order`, said],
+    expired: [`${name} didn’t answer in time`, 'Nothing was ordered.'],
+    cancelled: ['This order was cancelled', said],
+  }[status] ?? [`Sent to ${name}`, `We can’t show ${name}’s answer right now. If you don’t hear from them, contact them directly.`];
+  return shell(title,
+    `<p class="eyebrow">Your order with ${e(name)}</p><h1>${e(title)}</h1><p class="lede">${reference}</p>`,
+    `${orderTable(priced)}${text ? `<p class="notice">${e(text)}</p>` : ''}${contact}
+    <p class="small">Ask your AI to prepare a new order, or contact ${e(name)} directly.</p>`);
 }
 
 /** Expired, altered or unknown links. */

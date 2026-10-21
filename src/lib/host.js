@@ -1,9 +1,11 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHttpHandler } from '../mcp/http.js';
 import { createProtocol } from '../mcp/protocol.js';
 import { ToolError, businessTools, customerHandoff, priceOrder } from '../mcp/tools.js';
-import { confirmPage, confirmedPage, findWitness, linkProblemPage, orderRef, orderSecret, orderToken, readOrderToken, recordWitness } from './confirm.js';
+import { confirmPage, confirmedPage, findWitness, linkProblemPage, orderRef, orderSecret, orderToken, ownerAnswerPage, readOrderToken, recordWitness } from './confirm.js';
+import { createBot } from './bot.js';
+import { businessProfile, offeringIds } from './profile.js';
 import { NETWORK_INSTRUCTIONS, networkCard, networkTools, nlwebAsk } from './network.js';
 import { VERSION } from './version.js';
 import { isBot } from './stats.js';
@@ -21,6 +23,10 @@ import { ProjectError, loadProject, saveProject } from './project.js';
  * signs. Customers reach every business through the one network connector at
  * `/mcp`; businesses no longer have their own connector here. Orders prepared
  * on it are confirmed by the customer at `/o/<link>` (see confirm.js).
+ *
+ * With the owner bot on (bot.js), each business's folder also gets a
+ * gentifi-profile.json for the bot to read, rewritten when the business changes,
+ * and orders for owners on Telegram go to them there.
  */
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -34,8 +40,9 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
   const base = baseUrl.replace(/\/+$/, '');
   const businesses = new Map();
   let secret = null;
+  const bot = createBot({ env, log });
 
-  function mount(slug, path, project, mtimeMs) {
+  async function mount(slug, path, project, mtimeMs) {
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
     // The order rides in the signed link, so preparing one stores nothing
@@ -45,6 +52,21 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const { protocol, files } = businessServer(hosted, { log: (m) => log(`[${slug}] ${m}`), onToolCall: () => stats?.count(slug, 'toolCalls'), confirmLink });
     const handler = createHttpHandler({ protocol, files, mcpPath: '/mcp', log: (m) => log(`[${slug}] ${m}`) });
     businesses.set(slug, { slug, path, project, handler, files, tools: businessTools(hosted, { confirmLink }), mtimeMs, name: project.business.name });
+    if (bot) await writeProfile(slug, project).catch((e) => log(`[${slug}] Couldn't write gentifi-profile.json: ${e.message}`));
+  }
+
+  /** The business as a Gentifi Business Profile, for the owner bot; only rewritten when it changes. */
+  async function writeProfile(slug, project) {
+    const file = join(dir, slug, 'gentifi-profile.json');
+    const json = `${JSON.stringify(businessProfile(project), null, 2)}\n`;
+    if (await readFile(file, 'utf8').catch(() => '') === json) return;
+    await writeFile(`${file}.tmp`, json);
+    await rename(`${file}.tmp`, file); // the bot never reads half a file
+  }
+
+  /** Does this order go to the owner in Telegram? Only for businesses that take reservations. */
+  async function viaTelegram(project) {
+    return Boolean(bot) && project.ordering?.method === 'reserve' && await bot.onTelegram(businessProfile(project).business.id);
   }
 
   // Markets, shows and high streets: each gets its own connector, limited to its members
@@ -105,7 +127,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       const current = businesses.get(entry.name);
       if (current && current.mtimeMs === info.mtimeMs) continue;
       try {
-        mount(entry.name, path, await loadProject(path), info.mtimeMs);
+        await mount(entry.name, path, await loadProject(path), info.mtimeMs);
         log(`${current ? 'Reloaded' : 'Loaded'} ${entry.name}`);
       } catch (e) {
         log(`Skipped ${entry.name}: ${e instanceof ProjectError ? e.message : e.stack ?? e.message}`);
@@ -136,7 +158,7 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
         const project = { ...b.project, catalogue: { ...b.project.catalogue, items: imported.items, updatedAt: new Date().toISOString() } };
         await saveProject(b.path, project);
         const info = await stat(b.path);
-        mount(b.slug, b.path, project, info.mtimeMs);
+        await mount(b.slug, b.path, project, info.mtimeMs);
         log(`[${b.slug}] Synced: ${changes.join('; ')}`);
       } catch (e) {
         log(`[${b.slug}] Sync failed: ${e.message}`);
@@ -196,22 +218,53 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
       return page(409, linkProblemPage(`Something in this order isn’t sold by ${project.business.name} any more.`));
     }
     const ref = orderRef(token);
+    const changed = order.pricesAsOf !== project.catalogue.updatedAt;
+    const businessId = businessProfile(project).business.id;
     if (req.method === 'POST') {
-      // Drain the (empty) form body, then record once: confirming twice changes nothing
-      for await (const chunk of req) if (chunk.length > 4096) break;
+      const form = await readForm(req);
+      // Record once: confirming twice changes nothing
       if (!await findWitness(dir, business.slug, ref)) {
-        await recordWitness(dir, business.slug, { ref, order, priced, currency });
+        let handedTo = null;
+        if (await viaTelegram(project)) {
+          const values = { name: (form.get('name') ?? '').trim(), contact: (form.get('contact') ?? '').trim() };
+          if (!values.name || !values.contact) {
+            return page(400, confirmPage({ project, order, priced, changed, askContact: true, values,
+              problem: `Add your name and a phone number or email, so ${project.business.name} can reach you.` }));
+          }
+          const ids = offeringIds(project.catalogue.items);
+          const sent = await bot.send({
+            business_id: businessId, ref, confirmed_at: new Date().toISOString(),
+            items: priced.lines.map((l) => ({ offering_id: ids.get(l.sku), quantity: l.quantity })),
+            customer: { name: values.name.slice(0, 100), contact: values.contact.slice(0, 100) },
+            collection_date: order.collectionDate || undefined, note: order.note || undefined,
+          });
+          if (sent) handedTo = 'telegram';
+        }
+        await recordWitness(dir, business.slug, { ref, order, priced, currency, handedTo });
         stats?.count(business.slug, 'confirmations');
-        log(`[${business.slug}] Order ${ref} confirmed`);
+        log(`[${business.slug}] Order ${ref} confirmed${handedTo ? ', sent to the owner on Telegram' : ''}`);
       }
       return page(303, '', { location: `/o/${token}` });
     }
     const witness = await findWitness(dir, business.slug, ref);
     if (witness) {
       const handoff = customerHandoff(project, priced.lines, priced.total, { collectionDate: order.collectionDate, note: order.note, ref });
+      if (witness.handedTo === 'telegram') {
+        return page(200, ownerAnswerPage({ project, priced, ref, handoff, state: await bot?.status(businessId, ref) }));
+      }
       return page(200, confirmedPage({ project, priced, ref, handoff, confirmedAt: witness.confirmedAt }));
     }
-    return page(200, confirmPage({ project, order, priced, changed: order.pricesAsOf !== project.catalogue.updatedAt }));
+    return page(200, confirmPage({ project, order, priced, changed, askContact: await viaTelegram(project) }));
+  }
+
+  /** The Confirm form's fields (a few short ones; anything larger is cut off). */
+  async function readForm(req) {
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 4096) break;
+    }
+    return new URLSearchParams(body.slice(0, 4096));
   }
 
   async function handle(req, res) {
