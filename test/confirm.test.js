@@ -348,3 +348,48 @@ test('what the owner marks sold out in Telegram is what agents see, until the sh
     }
   });
 });
+
+test('prices and descriptions the owner edits in Telegram are what agents see, until the sheet changes them', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'hollow-lane'));
+    const path = join(dir, 'hollow-lane', 'gentifi.json');
+    await saveProject(path, demoProject());
+    const file = join(dir, 'edits.json');
+    const later = new Date(Date.now() + 60_000).toISOString();
+    await writeFile(file, JSON.stringify({ edits: { gtf_hollowlanefarmshop: { 'egg-12': {
+      price: { value: 350, sheet: 320, at: later },
+      description: { value: 'From our own hens, collected daily.', sheet: '', at: later },
+    } } } }));
+    let host;
+    const server = createServer((req, res) => host.handle(req, res));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      // No GENTIFI_EDITS_FILE: edits.json is found next to the stock file
+      host = createHost({ dir, baseUrl: url, botCheckMs: 0,
+        env: { GENTIFI_ORDER_SECRET: 'test-secret', GENTIFI_STOCK_FILE: join(dir, 'stock.json'), GENTIFI_BOT_URL: 'http://127.0.0.1:9', GENTIFI_BOT_SECRET_FILE: join(dir, 'none') } });
+      await host.scan();
+      const client = new McpHttpClient(`${url}/mcp`);
+      await client.connect();
+      const eggs = async () => (await client.request('tools/call', {
+        name: 'check_availability', arguments: { business: 'hollow-lane', sku: 'EGG-12' } })).structuredContent;
+      const edited = await eggs();
+      assert.equal(edited.price, 3.5, 'the owner’s price');
+      assert.equal(edited.description, 'From our own hens, collected daily.');
+      assert.equal(edited.pricesAsOf, later, 'prices as of the edit, so older order links say prices changed');
+      const saved = await loadProject(path);
+      assert.equal(saved.catalogue.items.find((i) => i.sku === 'EGG-12').price, 3.2, 'the saved project keeps the sheet');
+
+      // The owner changes the eggs' price in the sheet: the sheet wins for the price, the description stays
+      saved.catalogue.items.find((i) => i.sku === 'EGG-12').price = 3.4;
+      await saveProject(path, saved);
+      await utimes(path, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+      await host.scan();
+      const after = await eggs();
+      assert.equal(after.price, 3.4);
+      assert.equal(after.description, 'From our own hens, collected daily.');
+    } finally {
+      server.close();
+    }
+  });
+});

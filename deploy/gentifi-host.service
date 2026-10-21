@@ -14,6 +14,7 @@ Environment=GENTIFI_BOT_SECRET_FILE=/var/lib/gentifi-bot/handoff-secret
 # Businesses the bot is still onboarding: hidden here until their owner goes live
 Environment=GENTIFI_ONBOARDING_FILE=/var/lib/gentifi-bot/onboarding.json
 Environment=GENTIFI_STOCK_FILE=/var/lib/gentifi-bot/stock.json
+Environment=GENTIFI_EDITS_FILE=/var/lib/gentifi-bot/edits.json
 ExecStart=/usr/bin/node bin/gentifi.js host --dir /srv/gentifi/businesses --base-url https://mcp.gentifi.com --port 8787
 Restart=on-failure
 RestartSec=5
