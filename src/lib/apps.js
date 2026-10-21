@@ -1,7 +1,7 @@
 /**
  * AI apps that printed signs and scan pages name ("Works in … today"). Claude
- * and ChatGPT are tested end to end; Gemini was added on 15 October 2026 at
- * Finn's request, ahead of an end-to-end test.
+ * and ChatGPT are tested end to end; Gemini was added on 15 October 2026 and
+ * tested from the UK on 21 October 2026.
  */
 export const TESTED_APPS = ['Claude', 'ChatGPT', 'Gemini'];
 
@@ -12,7 +12,7 @@ export const ADD_APPS = TESTED_APPS;
 export const ADD_STEPS = {
   Claude: 'Settings → Connectors → Add custom connector. Paste the link.',
   ChatGPT: 'In a browser, not the app: chatgpt.com/plugins → Add (top right) → Add custom MCP server. Paste the link, no authentication. Then type @ in a chat to pick it.',
-  Gemini: 'On a computer: gemini.google.com/app → Settings → Connected Apps → Custom apps → add. Paste the link, click Next and follow the steps. Then type @ in a chat to pick it.',
+  Gemini: 'On a computer: gemini.google.com/app → Settings → Connected Apps → Custom apps → add. Paste the link, click Next and follow the steps. Then type @ in a chat to pick it. It works in the Gemini phone app once added.',
 };
 
 /**
