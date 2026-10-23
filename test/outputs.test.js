@@ -95,11 +95,11 @@ test('the badge carries the business link and the brand', () => {
   const svg = files().get('badge.svg');
   assert.match(svg, /<title id="t">Gentifi window sticker for Hollow Lane Farm Shop: scan to add us to your AI assistant \(hollowlane.example\)<\/title>/);
   assert.match(svg, />Agent-ready business</);
-  assert.match(svg, />Works in Claude, ChatGPT and Gemini today</);
+  assert.match(svg, />Works in Claude, ChatGPT, Gemini and Grok today</);
   const card = files().get('counter-card.svg');
   assert.match(card, />Ask your AI about us</);
   assert.match(card, />Then ask: “What has Hollow Lane Farm Shop got today\?”</);
-  assert.match(card, />Works in Claude, ChatGPT and Gemini today</);
+  assert.match(card, />Works in Claude, ChatGPT, Gemini and Grok today</);
   assert.doesNotMatch(card, /on Gentifi"|Hermes|any agent/, 'signs only promise apps we have tested');
   const page = files().get('index.html');
   assert.match(page, /Add Hollow Lane Farm Shop to your AI assistant/);
