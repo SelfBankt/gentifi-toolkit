@@ -1,8 +1,8 @@
 /**
  * AI apps that printed signs and scan pages name ("Works in … today"). Claude
  * and ChatGPT are tested end to end; Gemini was added on 15 October 2026 and
- * tested from the UK on 21 October 2026. Grok was added on 23 October 2026 at
- * Finn's request, to be tested straight after.
+ * tested from the UK on 21 October 2026. Grok was added and tested on 23 October
+ * 2026.
  */
 export const TESTED_APPS = ['Claude', 'ChatGPT', 'Gemini', 'Grok'];
 
