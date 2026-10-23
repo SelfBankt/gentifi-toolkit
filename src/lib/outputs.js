@@ -35,7 +35,7 @@ export function serverInstructions(project) {
   const b = project.business;
   return `Information from ${b.name}'s own catalogue, last updated ${project.catalogue.updatedAt.slice(0, 10)}. `
     + 'Prices and stock can change: say when they were last updated. '
-    + 'Nothing is ordered through this server. prepare_order returns a summary and a link: show the customer the summary and let them confirm with the business themselves.';
+    + 'Nothing is ordered through this server. prepare_order returns a message with the summary and a link: show the customer that message, link included, and let them confirm with the business themselves.';
 }
 
 /** One plain sentence describing the business from its own data. */

@@ -77,6 +77,25 @@ test('prepare_order takes items by name, so no search is needed first', async ()
   assert.equal(s.total.formatted, '£10.90');
 });
 
+test('prepare_order gives a message ready to show the customer, link included', async () => {
+  const confirmLink = () => 'https://mcp.gentifi.com/o/abc';
+  const p = createProtocol({ serverInfo: { name: 'test/shop', version: '1' }, instructions: 'Test', tools: businessTools(demoProject(), { confirmLink }) });
+  const s = (await call(p, 'prepare_order', { items: [{ sku: 'eggs', quantity: 1 }], collection_date: 'Saturday' })).structuredContent;
+  assert.equal(s.message, 'Hollow Lane Farm Shop: 1 x Free-range eggs (dozen) = £3.20. Total £3.20. For: Saturday. Check and confirm the order: https://mcp.gentifi.com/o/abc');
+  assert.equal(s.demo, undefined);
+  // Email hand-offs stay out of the message: a mailto link is not for reading
+  const mail = (await call(protocolFor(), 'prepare_order', { items: [{ sku: 'eggs', quantity: 1 }] })).structuredContent;
+  assert.doesNotMatch(mail.message, /mailto:/);
+});
+
+test('the demo shop asks assistants to still hand over the link', async () => {
+  const confirmLink = () => 'https://mcp.gentifi.com/o/abc';
+  const p = createProtocol({ serverInfo: { name: 'test/shop', version: '1' }, instructions: 'Test', tools: businessTools({ ...demoProject(), demo: true }, { confirmLink }) });
+  const s = (await call(p, 'prepare_order', { items: [{ sku: 'eggs', quantity: 1 }] })).structuredContent;
+  assert.match(s.message, /o\/abc \(A fictional demo shop: nothing real is ordered\.\)$/);
+  assert.match(s.demo, /Still give the customer the link/);
+});
+
 test('an item name that fits several items is an error listing them, not a guess', async () => {
   const project = demoProject();
   const bread = project.catalogue.items.find((i) => i.sku === 'BRD-SD');
