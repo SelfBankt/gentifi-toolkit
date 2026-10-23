@@ -150,3 +150,74 @@ test('names copied from a board in capitals get ordinary capitals', () => {
   const { rows } = draftFromReply({ items: [{ name: 'CAPPUCCINO', price: 3.5, category: 'HOT DRINKS' }] });
   assert.deepEqual([rows[0].name, rows[0].category], ['Cappuccino', 'Hot drinks']);
 });
+
+/** A service where each model answers its own way: 'ok', 'no-temperature' (refuses it), 'gone', 'down' or 'key'. */
+function fakeService(behaviour) {
+  const calls = [];
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ model: body.model, temperature: body.temperature });
+    const how = behaviour[body.model] ?? 'gone';
+    if (how === 'key') return new Response('{"error":"bad key"}', { status: 401 });
+    if (how === 'down') throw new Error('socket hang up');
+    if (how === 'gone') return new Response('{"error":{"message":"Model not found"}}', { status: 404 });
+    if (how === 'no-temperature' && body.temperature !== undefined) {
+      return new Response('{"error":{"message":"invalid temperature: only 1 is allowed for this model"}}', { status: 400 });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(REPLY) } }] }));
+  };
+  return { calls, fetchImpl };
+}
+
+test('a model that refuses temperature 0 is asked again without it', async () => {
+  await withTempDir(async (dir) => {
+    const photo = join(dir, 'board.png');
+    await writeFile(photo, PNG);
+    const { calls, fetchImpl } = fakeService({ 'kimi-k3.1-pro': 'no-temperature' });
+    const reply = await readPhotos([photo], { env: { GENTIFI_AI_KEY: 'k', GENTIFI_AI_MODEL: 'kimi-k3.1-pro' }, fetchImpl });
+    assert.equal(reply.model, 'kimi-k3.1-pro');
+    assert.deepEqual(calls, [{ model: 'kimi-k3.1-pro', temperature: 0 }, { model: 'kimi-k3.1-pro', temperature: undefined }]);
+  });
+});
+
+test('several models are tried in turn; a refused key stops at once', async () => {
+  await withTempDir(async (dir) => {
+    const photo = join(dir, 'board.png');
+    await writeFile(photo, PNG);
+    const env = { GENTIFI_AI_KEY: 'k', GENTIFI_AI_MODEL: 'kimi-k3, kimi-k3.1-pro' };
+    const first = fakeService({ 'kimi-k3': 'ok', 'kimi-k3.1-pro': 'ok' });
+    assert.equal((await readPhotos([photo], { env, fetchImpl: first.fetchImpl })).model, 'kimi-k3');
+    assert.equal(first.calls.length, 1, 'the first that works');
+
+    const withdrawn = fakeService({ 'kimi-k3': 'gone', 'kimi-k3.1-pro': 'no-temperature' });
+    const reply = await readPhotos([photo], { env, fetchImpl: withdrawn.fetchImpl });
+    assert.equal(reply.model, 'kimi-k3.1-pro');
+    assert.equal(reply.business.name, 'Millbrook Bakery');
+    assert.deepEqual(withdrawn.calls.map((c) => c.model), ['kimi-k3', 'kimi-k3.1-pro', 'kimi-k3.1-pro']);
+
+    const down = fakeService({ 'kimi-k3': 'down', 'kimi-k3.1-pro': 'ok' });
+    assert.equal((await readPhotos([photo], { env, fetchImpl: down.fetchImpl })).model, 'kimi-k3.1-pro', 'after a network failure too');
+
+    const key = fakeService({ 'kimi-k3': 'key', 'kimi-k3.1-pro': 'ok' });
+    await assert.rejects(readPhotos([photo], { env, fetchImpl: key.fetchImpl }), /refused the key/);
+    assert.equal(key.calls.length, 1, 'no point trying another model with the same key');
+
+    const none = fakeService({});
+    await assert.rejects(readPhotos([photo], { env, fetchImpl: none.fetchImpl }),
+      /None of the models could read it\. kimi-k3: The AI service answered 404.* \| kimi-k3\.1-pro: The AI service answered 404/);
+  });
+});
+
+test('gentifi draft says which model read the photo', async () => {
+  await withTempDir(async (dir) => {
+    const photo = join(dir, 'board.png');
+    await writeFile(photo, PNG);
+    const { fetchImpl } = fakeService({ 'kimi-k3': 'gone', 'kimi-k3.1-pro': 'ok' });
+    const io = capture();
+    const code = await draft.run({ photo: [photo], out: join(dir, 'out') }, io, [],
+      { env: { GENTIFI_AI_KEY: 'k', GENTIFI_AI_MODEL: 'kimi-k3,kimi-k3.1-pro' }, fetchImpl });
+    assert.equal(code, 0, io.stderr);
+    assert.match(io.stdout, /^Read with kimi-k3\.1-pro\.$/m);
+    assert.match(await readFile(join(dir, 'out', 'notes.md'), 'utf8'), /An AI model \(kimi-k3\.1-pro\) read these/);
+  });
+});
