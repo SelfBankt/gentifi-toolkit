@@ -70,6 +70,25 @@ test('prepare_order never orders: totals in pence and a hand-off the customer se
   assert.match(body, /Please reply to confirm/);
 });
 
+test('prepare_order takes items by name, so no search is needed first', async () => {
+  const res = await call(protocolFor(), 'prepare_order', { items: [{ sku: 'sourdough', quantity: 1 }, { sku: 'Free-range eggs (dozen)', quantity: 2 }] });
+  const s = res.structuredContent;
+  assert.deepEqual(s.lines.map((l) => [l.sku, l.quantity]), [['BRD-SD', 1], ['EGG-12', 2]]);
+  assert.equal(s.total.formatted, '£10.90');
+});
+
+test('an item name that fits several items is an error listing them, not a guess', async () => {
+  const project = demoProject();
+  const bread = project.catalogue.items.find((i) => i.sku === 'BRD-SD');
+  project.catalogue.items.push({ ...bread, sku: 'BRD-WH', name: 'White loaf' });
+  const res = await call(protocolFor(project), 'prepare_order', { items: [{ sku: 'loaf', quantity: 1 }] });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /"loaf" could mean Sourdough loaf \(BRD-SD\), White loaf \(BRD-WH\)/);
+  const none = await call(protocolFor(), 'prepare_order', { items: [{ sku: 'the', quantity: 1 }] });
+  assert.equal(none.isError, true);
+  assert.match(none.content[0].text, /No item matches "the"/);
+});
+
 test('prepare_order warns about shortages and hands off to a checkout when there is one', async () => {
   const project = demoProject();
   project.ordering = { method: 'checkout', checkoutUrl: 'https://hollowlane.example/cart/{sku}:{quantity}', bookingUrl: '', notes: '' };

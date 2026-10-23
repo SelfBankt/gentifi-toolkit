@@ -65,7 +65,8 @@ export function memberView(businesses, members) {
 }
 
 export const eventInstructions = (event) => `This connector covers the traders at ${event.name}, using their own catalogues. `
-  + 'When the customer asks what is on offer or names a trader, use find_businesses first, then pass its id as business to the other tools. '
+  + 'When the customer names a trader, pass that name as business to the other tools; use find_businesses when they ask what is on offer. '
+  + 'To order, call prepare_order straight away with the items by name: it checks prices and stock itself. '
   + 'Prices and stock can change: say when they were last updated. '
   + 'Nothing is ordered through this server. prepare_order returns a summary and a link: show the customer the summary and let them confirm with the trader themselves.';
 

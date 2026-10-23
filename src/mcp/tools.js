@@ -60,13 +60,23 @@ export function searchItems(items, query) {
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
 }
 
+/**
+ * An item by SKU, exact name, or the customer's own words. Words that match
+ * several items equally well are an error listing them, never a guess.
+ */
 function findItem(items, ref) {
   const want = String(ref ?? '').trim().toLowerCase();
   if (!want) return null;
-  return items.find((i) => i.sku.toLowerCase() === want)
-    ?? items.find((i) => i.name.toLowerCase() === want)
-    ?? searchItems(items, want)[0]?.item
-    ?? null;
+  const exact = items.find((i) => i.sku.toLowerCase() === want) ?? items.find((i) => i.name.toLowerCase() === want);
+  if (exact) return exact;
+  const [best, ...rest] = searchItems(items, want);
+  if (!best || best.score === 0) return null;
+  const tied = [best, ...rest.filter((r) => r.score === best.score)];
+  if (tied.length > 1) {
+    const names = tied.slice(0, 5).map((r) => `${r.item.name} (${r.item.sku})`).join(', ');
+    throw new ToolError(`"${ref}" could mean ${names}. Ask the customer which one, then use its SKU.`);
+  }
+  return best.item;
 }
 
 // --- Shapes returned to agents ---
@@ -249,7 +259,7 @@ export function businessTools(project, { confirmLink = null } = {}) {
       annotations: { title: 'Check availability', ...READ_ONLY },
       handler: ({ sku, quantity = 1 }) => {
         const item = findItem(items, sku);
-        if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to find the SKU.`);
+        if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to see what they have.`);
         const available = inStock(item, quantity);
         let note;
         if (available === null) note = `${name}'s catalogue doesn't give a stock level for this item.`;
@@ -264,7 +274,7 @@ export function businessTools(project, { confirmLink = null } = {}) {
     {
       name: 'prepare_order',
       title: 'Prepare an order for the customer to confirm',
-      description: `Work out the items and total for an order or reservation at ${name}, with the link the customer uses to confirm it. Nothing is ordered or sent: show the customer the summary and let them decide.`,
+      description: `Work out the items and total for an order or reservation at ${name}, with the link the customer uses to confirm it. Give each item by name, as the customer said it, or by SKU: this checks prices and stock itself, so there is no need to search or check availability first. Nothing is ordered or sent: show the customer the summary and let them decide.`,
       inputSchema: ORDER_ARGUMENTS,
       outputSchema: {
         type: 'object',
@@ -309,7 +319,7 @@ export const ORDER_ARGUMENTS = {
       items: {
         type: 'object',
         properties: {
-          sku: { type: 'string', description: 'SKU from search_catalogue' },
+          sku: { type: 'string', description: 'The item: its name as the customer said it (e.g. "sourdough loaf"), or its SKU' },
           quantity: { type: 'integer', minimum: 1 },
         },
         required: ['sku', 'quantity'],
@@ -334,7 +344,7 @@ export function priceOrder(items, wanted, currency) {
   let priced = true;
   const lines = wanted.map(({ sku, quantity }) => {
     const item = findItem(items, sku);
-    if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to find the SKU.`);
+    if (!item) throw new ToolError(`No item matches "${sku}". Use search_catalogue to see what they have.`);
     const available = inStock(item, quantity);
     if (available === false) {
       short.push(item.name);
