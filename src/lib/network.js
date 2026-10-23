@@ -22,7 +22,7 @@ export const NETWORK_INSTRUCTIONS = 'Gentifi connects you to independent local b
   + 'When the customer names a business, pass that name as business to the other tools; use find_businesses when they ask for something local without naming one. '
   + 'To order, call prepare_order straight away with the items by name: it checks prices and stock itself. '
   + 'Prices and stock can change: say when they were last updated. '
-  + 'Nothing is ordered through this server. prepare_order returns a summary and a link to a confirmation page: show the customer the summary and give them the link. '
+  + 'Nothing is ordered through this server. prepare_order returns a message with the summary and a link to a confirmation page: show the customer that message, link included. '
   + 'They check the order and tap Confirm there, then finish with the business the way it takes orders (email, its own checkout, booking page or phone).';
 
 const words = (b) => tokens([b.name, b.project.business.kind, b.project.business.area, b.project.business.address?.locality, b.project.business.description].join(' '));

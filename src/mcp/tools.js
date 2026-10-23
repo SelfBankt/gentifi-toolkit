@@ -278,29 +278,39 @@ export function businessTools(project, { confirmLink = null } = {}) {
       inputSchema: ORDER_ARGUMENTS,
       outputSchema: {
         type: 'object',
-        properties: { status: { const: 'not_ordered' }, confirmationRequired: { const: true }, nextStep: { type: 'object' } },
-        required: ['status', 'confirmationRequired', 'nextStep'],
+        properties: { status: { const: 'not_ordered' }, confirmationRequired: { const: true }, message: { type: 'string' }, nextStep: { type: 'object' } },
+        required: ['status', 'confirmationRequired', 'message', 'nextStep'],
       },
       annotations: { title: 'Prepare an order for the customer to confirm', ...READ_ONLY },
       handler: ({ items: wanted, collection_date: collectionDate, note }) => {
         const { lines, total, warnings, summary } = priceOrder(items, wanted, currency);
+        const next = confirmLink
+          ? {
+            type: 'confirm',
+            label: 'Check and confirm the order',
+            url: confirmLink({ items: lines.map((l) => [l.sku, l.quantity]), collectionDate, note }),
+            instructions: `Show the customer this summary, then give them this link. They check the order and tap Confirm on the page, which then takes them to ${name}'s own way of ordering (${nextStep(project, lines, total, {}).label.toLowerCase()}). Nothing is ordered until they do.`,
+          }
+          : nextStep(project, lines, total, { collectionDate, note });
         return {
           status: 'not_ordered',
           confirmationRequired: true,
           business: name,
+          // Ready to show as it is: assistants pass on text written for the customer
+          message: [
+            `${name}: ${summary}`,
+            collectionDate && `For: ${collectionDate}.`,
+            warnings.join(' '),
+            (next.type === 'confirm' || next.type === 'link') && `${next.label}: ${next.url}`,
+            project.demo && '(A fictional demo shop: nothing real is ordered.)',
+          ].filter(Boolean).join(' '),
+          ...(project.demo && { demo: `${name} is a fictional demo shop. Still give the customer the link: trying the confirmation page is the point of the demo.` }),
           summary,
           lines,
           total,
           collectionDate: collectionDate || undefined,
           warnings,
-          nextStep: confirmLink
-            ? {
-              type: 'confirm',
-              label: 'Check and confirm the order',
-              url: confirmLink({ items: lines.map((l) => [l.sku, l.quantity]), collectionDate, note }),
-              instructions: `Show the customer this summary, then give them this link. They check the order and tap Confirm on the page, which then takes them to ${name}'s own way of ordering (${nextStep(project, lines, total, {}).label.toLowerCase()}). Nothing is ordered until they do.`,
-            }
-            : nextStep(project, lines, total, { collectionDate, note }),
+          nextStep: next,
           pricesAsOf: asOf,
         };
       },

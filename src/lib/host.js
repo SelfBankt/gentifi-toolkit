@@ -16,6 +16,9 @@ import { diffItems } from '../commands/sync.js';
 import { readSource } from './catalogue.js';
 import { ProjectError, loadProject, saveProject, toMinor } from './project.js';
 
+/** The fictional Hollow Lane Farm Shop (deploy/add-demo.sh). */
+export const DEMO_SLUG = 'demo-business';
+
 /**
  * Hosts many businesses from one process. Each business is a folder in `dir`
  * named by its slug, holding its gentifi.json, and is served under
@@ -158,6 +161,8 @@ export function createHost({ dir, baseUrl, log = () => {}, fetchImpl = globalThi
     const project = withOwnerEdits(withOwnerStock(sheet, owner.marks), owner.edits);
     // Hosted URLs replace whatever the project says, so its files point here
     const hosted = { ...project, publish: { ...project.publish, baseUrl: `${base}/b/${slug}`, mcpUrl: `${base}/mcp`, networkUrl: `${base}/mcp` } };
+    // The fictional demo shop: tools tell assistants to still hand over its links
+    if (slug === DEMO_SLUG) hosted.demo = true;
     // The order rides in the signed link, so preparing one stores nothing
     const confirmLink = ({ items, collectionDate, note }) => `${base}/o/${orderToken(secret, {
       business: slug, items, collectionDate, note, pricesAsOf: project.catalogue.updatedAt, preparedAt: new Date().toISOString(),

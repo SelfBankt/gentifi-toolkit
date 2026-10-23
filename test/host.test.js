@@ -116,7 +116,7 @@ test('the host re-reads each business sheet, keeps the last good catalogue, and 
 
 test('the network connector at /mcp reaches every business by id or name', async () => {
   await withTempDir(async (dir) => {
-    for (const [slug, name, item] of [['hollow-lane', 'Hollow Lane Farm Shop', 'Free-range eggs (dozen)'], ['corner-bakery', 'Corner Bakery', 'Sourdough loaf']]) {
+    for (const [slug, name, item] of [['demo-business', 'Hollow Lane Farm Shop', 'Free-range eggs (dozen)'], ['corner-bakery', 'Corner Bakery', 'Sourdough loaf']]) {
       await mkdir(join(dir, slug));
       const project = demoProject();
       project.business.name = name;
@@ -136,7 +136,7 @@ test('the network connector at /mcp reaches every business by id or name', async
 
       const call = async (name, args) => (await client.request('tools/call', { name, arguments: args }));
       const found = (await call('find_businesses', { query: 'eggs' })).structuredContent;
-      assert.deepEqual(found.businesses.map((b) => b.id), ['hollow-lane']);
+      assert.deepEqual(found.businesses.map((b) => b.id), ['demo-business']);
       assert.deepEqual(found.businesses[0].matchingItems, ['Free-range eggs (dozen)']);
       assert.equal((await call('find_businesses', {})).structuredContent.total, 2);
 
@@ -146,10 +146,16 @@ test('the network connector at /mcp reaches every business by id or name', async
       const order = (await call('prepare_order', { business: 'corner-bakery', items: [{ sku: 'ITEM-1', quantity: 2 }] })).structuredContent;
       assert.equal(order.status, 'not_ordered');
       assert.equal(order.business, 'Corner Bakery');
+      assert.match(order.message, new RegExp(`Check and confirm the order: ${url}/o/`));
+      assert.equal(order.demo, undefined);
+      // The fictional demo shop asks assistants to still hand over the link
+      const demo = (await call('prepare_order', { business: 'Hollow Lane Farm Shop', items: [{ sku: 'eggs', quantity: 1 }] })).structuredContent;
+      assert.match(demo.demo, /Still give the customer the link/);
+      assert.match(demo.message, /nothing real is ordered/);
 
       const ask = await (await fetch(`${url}/ask?query=${encodeURIComponent('free-range eggs')}`)).json();
       assert.equal(ask.results[0].name, 'Free-range eggs (dozen)');
-      assert.equal(ask.results[0].site, 'hollow-lane');
+      assert.equal(ask.results[0].site, 'demo-business');
       assert.equal(ask.results[0].schema_object.offers.seller.name, 'Hollow Lane Farm Shop');
       const posted = await (await fetch(`${url}/ask`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'sourdough', site: 'corner-bakery' }) })).json();
       assert.deepEqual(posted.results.map((r) => r.site), ['corner-bakery']);

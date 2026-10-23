@@ -68,7 +68,7 @@ export const eventInstructions = (event) => `This connector covers the traders a
   + 'When the customer names a trader, pass that name as business to the other tools; use find_businesses when they ask what is on offer. '
   + 'To order, call prepare_order straight away with the items by name: it checks prices and stock itself. '
   + 'Prices and stock can change: say when they were last updated. '
-  + 'Nothing is ordered through this server. prepare_order returns a summary and a link: show the customer the summary and let them confirm with the trader themselves.';
+  + 'Nothing is ordered through this server. prepare_order returns a message with the summary and a link: show the customer that message, link included, and let them confirm with the trader themselves.';
 
 export function eventCard(event, base, version) {
   const host = new URL(base).hostname;
