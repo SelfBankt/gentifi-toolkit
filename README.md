@@ -50,11 +50,9 @@ gentifi check                   # the Gentified test: can agents find and buy?
 gentifi build                   # write every agent format to ./dist
 gentifi serve                   # run the MCP connector (HTTP, or --stdio)
 gentifi publish --self-host <dir>   # lay out the files for your own web server
-gentifi host --dir <folder> --base-url <url>   # host many businesses from one server
 gentifi check --url <link>      # test a published business, the way an agent would
 gentifi website [--check <url>] # snippet for the business's own site, or check what's there
 gentifi website --check <url> --name "…" --report <file.html>   # one-page AI visibility report for a prospect
-gentifi stats --dir <folder>    # how often each hosted business was opened, asked about and found
 gentifi collection check <file or URL> [--verify]   # check a Business Collection (draft 0.2)
 gentifi payments [--demo]       # agent payments by Lightning, USDC or USDT (prototype)
 ```
@@ -133,50 +131,13 @@ Search engines and AI search mostly trust a business's own site, so `gentifi web
 
 For a business that isn't on Gentifi yet, give its name instead of a project: `gentifi website --check https://their-site.example --name "Their Shop" --report report.html` writes a one-page "How AI sees your business" report to send before a first conversation. It states only what the check found; print it or save it as a PDF from a browser.
 
-`gentifi host` also keeps anonymous daily counts for each business in `<dir>/<slug>/stats.json`: page opens by people (not crawlers or link previews), questions from AI tools, appearances in searches, and orders confirmed. Only numbers are kept, never who, from where or what was asked.
-
 ### Confirmation page and witness record
 
-On a host, `prepare_order` returns a link to a confirmation page, `/o/<link>`, instead of going straight to the business's email or checkout. The order travels inside the link, signed with the host's key (`GENTIFI_ORDER_SECRET`, or `<dir>/.order-secret`, made on first run), so preparing an order stores nothing and every tool stays read-only. Links last a week and can't be altered.
+`src/lib/confirm.js` has the building blocks of a confirmation step between an AI preparing an order and the business receiving it: the order travels inside a signed link (`orderToken`, `readOrderToken`; links last a week and can't be altered), the page the customer confirms on, and a witness record of each confirmed order, with nothing about who the customer is (`recordWitness`). Gentifi's hosted network uses them at `mcp.gentifi.com/o/<link>`. `gentifi serve` (one business, self-hosted) hands orders straight to the business's email or checkout.
 
-- Opening the link shows the order at today's prices, with a notice if the business has updated its catalogue since. Link previews and crawlers can open it safely.
-- Tapping **Confirm** appends one line to `<dir>/<slug>/witness.jsonl`: a reference, when it was prepared and confirmed, the items, prices and total, and the collection date. Nothing about who the customer is; a note is kept only as a hash. Confirming twice records once.
-- The page then shows the reference and hands the customer on to the business's own way of ordering: an email with the order and reference, its checkout or booking page, or its phone number.
+## Gentifi's hosted network
 
-**Owners on Telegram.** With the owner bot from [gentifi-profile](https://github.com/SelfBankt/gentifi-profile) running on the same machine (set `GENTIFI_BOT_URL`, such as `http://127.0.0.1:8765`, and `GENTIFI_BOT_SECRET_FILE`, the bot's `handoff-secret`), the host writes a `gentifi-profile.json` into each business's folder for the bot, and orders for a business that takes reservations and whose owner is linked in Telegram go to the owner there:
-
-- The page also asks for the customer's name and a phone number or email. They go only to the owner's message; the witness record notes that the order was handed to Telegram, nothing about who it's for.
-- After Confirm, the page shows the owner's answer: waiting (it refreshes itself), accepted (with a payment link or Lightning invoice from the business's own wallet, if it has one), or declined, expired or cancelled, with the business's usual contact details.
-- If the bot is off, unreachable or slow, or the owner isn't linked, the page works as before.
-
-**Onboarding.** With `GENTIFI_ONBOARDING_FILE` (the bot's `onboarding.json`), businesses the bot is still onboarding are loaded and get their `gentifi-profile.json`, but are hidden from the network connector, events, `/ask`, their `/b/` page and order links until their owner checks the listing in Telegram and taps Go live. The host rereads the list within 5 seconds of a change; if it can't be read, the last list stands. For a new business, run the bot's `invite --onboard` before copying its folder in.
-
-**Stock from the owner.** With `GENTIFI_STOCK_FILE` (the bot's `stock.json`), what an owner marks sold out or back in stock in Telegram (`/soldout`, `/instock`, or declining an order as sold out) is what customers' agents see, within 5 seconds: in search, availability, prepared orders and `/ask`. A mark gives way when the sheet is read again after it. The saved `gentifi.json` and the bot's `gentifi-profile.json` keep the sheet's own stock.
-
-**Prices and descriptions from the owner.** With `GENTIFI_EDITS_FILE` (the bot's `edits.json`; by default next to `GENTIFI_STOCK_FILE`), what an owner changes with `/edit` in Telegram is what customers' agents see, within 5 seconds, until the sheet changes that same field. The catalogue's prices-as-of time moves to the latest edit, so an order link made before it says prices have changed. The saved project and `gentifi-profile.json` keep the sheet's own values.
-
-`gentifi serve` (one business, self-hosted) keeps the direct handoff. `gentifi stats --dir <folder>` prints the totals for the last 30 days (`--days` to change).
-
-## Hosting many businesses
-
-`gentifi host` serves every business in a folder from one process: each sub-folder is a business, named by its slug and holding its `gentifi.json`.
-
-```bash
-gentifi host --dir ./businesses --base-url https://mcp.gentifi.com
-```
-
-Each business is served under `/b/<slug>/`: its scan-to-add page, discovery files, `SKILL.md` and signs, all pointing at the network connector. Hosted businesses don't have a connector of their own: `/b/<slug>/mcp` answers 410 with a message to add the network connector instead. (`gentifi serve` still runs one business's own connector when you host it yourself.) The host also serves, across every business:
-
-- `/mcp`: the network connector. Customers add it once to reach every business; `find_businesses` finds them and the other tools take a business id or name.
-- `/.well-known/mcp/server-card.json` (the network connector) and `/.well-known/mcp/server-cards.json` (it, then each event's card).
-- `/c/<event>/`: markets, shows and high streets. A settings file at `<dir>/_collections/<event>.json` (`{"name": "…", "kind": "event", "members": ["<business folder>", …], "validFrom": "2026-12-05", "validTo": "2026-12-05"}`; `kind` is event, place, association or marketplace) gives the event a page to add it, its own connector at `/c/<event>/mcp` (the network connector, limited to its members), signs (`badge.svg`, `counter-card.svg`, `signs.html`) and a Business Collections draft 0.2 document at `/c/<event>/collection.json`. Members not hosted yet are listed in the log and left out until they are.
-- `/ask?query=…`: NLWeb-style natural-language search over every business's products, answered from the catalogues with no language model (non-streaming list mode; add `site=<slug>` for one business).
-- `/.well-known/openai-apps-challenge`: the token in `<dir>/.openai-apps-challenge`, for ChatGPT's plugin directory.
- Every 10 minutes (`--sync-minutes`) the host re-reads each business's published Google Sheet and picks up new or changed folders. A sheet that comes back empty or broken never replaces the last good catalogue, and one broken business never stops the others. `/healthz` reports how many businesses are live.
-
-`deploy/` sets this up on an Ubuntu or Debian VPS: `setup-vps.sh` installs Node.js and Caddy (which handles HTTPS), and runs the host as a locked-down systemd service.
-
-On a VPS that's already set up, `deploy/install-tools.sh` adds four commands and touches nothing else: `gentifi-update` (pull the latest toolkit, restart the host and check it's healthy), `gentifi-stats` (the anonymous counts), `gentifi-backup` (a copy of the businesses folder, also made nightly by a systemd timer and kept for 14 days in `/srv/gentifi/backups`) and `gentifi-check` (the daily check: services running, problems in the last day's logs, orders waiting for an owner, fresh backups, disk and counts; it changes nothing). A timer sends its summary to Gentifi's team chat in Telegram (`gentifi-bot team`, never to owners) every morning at 7.30; `gentifi-check --telegram` sends it now.
+Gentifi runs the network connector at `https://mcp.gentifi.com/mcp` and each business's page at `mcp.gentifi.com/b/<business>/` from a hosting service built on this toolkit. That service, its counts and its deployment aren't part of this repository. To put a business online yourself, use `gentifi serve` or `gentifi publish --self-host`.
 
 ## Payments through the agent (prototype)
 

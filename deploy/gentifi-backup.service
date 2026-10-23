@@ -1,6 +1,0 @@
-[Unit]
-Description=Gentifi: back up hosted businesses
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/gentifi-backup

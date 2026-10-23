@@ -1,6 +1,0 @@
-[Unit]
-Description=Gentifi daily check, sent to the team chat in Telegram
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/gentifi-check --telegram
