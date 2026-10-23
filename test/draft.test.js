@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import draft from '../src/commands/draft.js';
-import { draftFromReply, parseReply, readPhotos, toCsv } from '../src/lib/draft.js';
+import { draftFromReply, parseReply, readPhotos, tidyCapitals, toCsv } from '../src/lib/draft.js';
 import { itemsFromRecords } from '../src/lib/catalogue.js';
 import { parseCsv } from '../src/lib/csv.js';
 import { capture, withTempDir } from './helpers.js';
@@ -136,4 +136,17 @@ test('gentifi draft writes the CSV and the notes for a person to check', async (
     assert.equal(await draft.run({ photo: [photo], out: join(dir, 'none') }, empty, [], { env, fetchImpl: fakeAi({ items: [] }).fetchImpl }), 1);
     assert.match(empty.stderr, /No items could be read/);
   });
+});
+
+test('names copied from a board in capitals get ordinary capitals', () => {
+  assert.equal(tidyCapitals('FLAT WHITE'), 'Flat white');
+  assert.equal(tidyCapitals('ESPRESSO MACCHIATO'), 'Espresso macchiato');
+  assert.equal(tidyCapitals('BLT SANDWICH'), 'BLT sandwich', 'short words with no vowels stay');
+  assert.equal(tidyCapitals('GF BROWNIE'), 'GF brownie');
+  assert.equal(tidyCapitals('1/2 DOZEN EGGS'), '1/2 dozen eggs');
+  assert.equal(tidyCapitals('Flat White'), 'Flat White', 'mixed case is left as written');
+  assert.equal(tidyCapitals('iPhone case'), 'iPhone case');
+  assert.equal(tidyCapitals('42'), '42');
+  const { rows } = draftFromReply({ items: [{ name: 'CAPPUCCINO', price: 3.5, category: 'HOT DRINKS' }] });
+  assert.deepEqual([rows[0].name, rows[0].category], ['Cappuccino', 'Hot drinks']);
 });
