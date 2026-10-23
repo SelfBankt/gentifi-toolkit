@@ -91,6 +91,19 @@ const price = (v) => {
 };
 
 /**
+ * A name copied from a board in capitals, in ordinary capitals: "FLAT WHITE" -> "Flat white".
+ * Short words with no vowels stay as they are ("BLT", "GF"); names with any small letters are
+ * left alone, as the business wrote them.
+ */
+export function tidyCapitals(text) {
+  if (!/[A-Z]/.test(text) || /[a-z]/.test(text)) return text;
+  const words = text.split(/(\s+)/).map((w) => (/^[A-Z]{2,4}$/.test(w) && !/[AEIOUY]/.test(w) ? w : w.toLowerCase()));
+  const out = words.join('');
+  const first = out.search(/\S/); // only if the name starts with a letter: "1/2 dozen eggs" stays
+  return first < 0 ? out : out.slice(0, first) + out[first].toUpperCase() + out.slice(first + 1);
+}
+
+/**
  * The reply as rows for the catalogue CSV, each with a "check" note for anything a
  * person should look at, and the business details and unreadable parts as notes.
  */
@@ -98,7 +111,7 @@ export function draftFromReply(reply) {
   const rows = [];
   const names = new Map();
   for (const raw of Array.isArray(reply?.items) ? reply.items : []) {
-    const name = str(raw?.name);
+    const name = tidyCapitals(str(raw?.name));
     if (!name) continue;
     const checks = [str(raw.unsure)].filter(Boolean);
     let p = price(raw.price);
@@ -114,7 +127,7 @@ export function draftFromReply(reply) {
     if (names.has(key)) checks.push(`same name as row ${names.get(key)}: give each its own name`);
     else names.set(key, rows.length + 2); // + header row, 1-based
     rows.push({
-      name, price: p ?? '', price_from: p == null ? from ?? '' : '', unit: str(raw.unit), category: str(raw.category),
+      name, price: p ?? '', price_from: p == null ? from ?? '' : '', unit: str(raw.unit), category: tidyCapitals(str(raw.category)),
       description: str(raw.description), allergens: str(raw.allergens), dietary: str(raw.dietary), notice: str(raw.notice),
       check: checks.join('; '),
     });
