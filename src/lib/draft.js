@@ -148,14 +148,35 @@ export function toCsv(rows) {
   return [CSV_COLUMNS.join(','), ...rows.map((r) => CSV_COLUMNS.map((c) => cell(r[c] ?? '')).join(','))].join('\n') + '\n';
 }
 
-/** Sends the photos to the model and returns its reply, parsed. */
+/**
+ * Sends the photos to the model and returns its reply, parsed, with the model that read it
+ * (reply.model). `model` may list several, comma-separated, tried in turn when one fails or
+ * has been withdrawn: "kimi-k3,kimi-k3.1-pro". A refused key stops at once (it's the same for all).
+ */
 export async function readPhotos(paths, { env = process.env, fetchImpl = globalThis.fetch, model = env.GENTIFI_AI_MODEL, timeoutMs = 180000 } = {}) {
   if (!paths.length) throw new DraftError('Give at least one photo with --photo.');
   if (paths.length > MAX_PHOTOS) throw new DraftError(`At most ${MAX_PHOTOS} photos at a time.`);
-  if (!model) throw new DraftError('Choose a model that reads images with --model or GENTIFI_AI_MODEL (on OpenCode Go, try kimi-k3).');
+  const models = String(model ?? '').split(',').map((m) => m.trim()).filter(Boolean);
+  if (!models.length) throw new DraftError('Choose a model that reads images with --model or GENTIFI_AI_MODEL (on OpenCode Go, try kimi-k3).');
   const images = await Promise.all(paths.map(photoUrl));
   const key = await aiKey(env);
   const base = (env.GENTIFI_AI_URL || DEFAULT_AI_URL).replace(/\/+$/, '');
+  const failures = [];
+  for (const name of models) {
+    try {
+      const reply = await askModel(name, { images, key, base, fetchImpl, timeoutMs, count: paths.length });
+      return { ...reply, model: name };
+    } catch (e) {
+      if (!(e instanceof DraftError) || e.final) throw e;
+      failures.push([name, e.message]);
+    }
+  }
+  if (failures.length === 1) throw new DraftError(failures[0][1]);
+  throw new DraftError(`None of the models could read it. ${failures.map(([name, why]) => `${name}: ${why}`).join(' | ')}`);
+}
+
+/** One model's reading. Asks for temperature 0 (literal readings), and asks again without it if the model refuses it. */
+async function askModel(model, { images, key, base, fetchImpl, timeoutMs, count }, temperature = true) {
   let res;
   try {
     res = await fetchImpl(`${base}/chat/completions`, {
@@ -168,11 +189,11 @@ export async function readPhotos(paths, { env = process.env, fetchImpl = globalT
       },
       body: JSON.stringify({
         model,
-        temperature: 0,
+        ...(temperature ? { temperature: 0 } : {}),
         messages: [
           { role: 'system', content: INSTRUCTIONS },
           { role: 'user', content: [
-            { type: 'text', text: `Read ${paths.length === 1 ? 'this photo' : `these ${paths.length} photos (one board or menu)`} and reply with the JSON.` },
+            { type: 'text', text: `Read ${count === 1 ? 'this photo' : `these ${count} photos (one board or menu)`} and reply with the JSON.` },
             ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
           ] },
         ],
@@ -183,7 +204,12 @@ export async function readPhotos(paths, { env = process.env, fetchImpl = globalT
     throw new DraftError(`Couldn't reach the AI service at ${base}: ${e.message}`);
   }
   const body = await res.text();
-  if (res.status === 401 || res.status === 403) throw new DraftError('The AI service refused the key: check ~/.gentifi/ai-key.');
+  if (res.status === 401 || res.status === 403) {
+    throw Object.assign(new DraftError('The AI service refused the key: check ~/.gentifi/ai-key.'), { final: true });
+  }
+  if (res.status === 400 && temperature && /temperature/i.test(body)) {
+    return askModel(model, { images, key, base, fetchImpl, timeoutMs, count }, false);
+  }
   if (!res.ok) throw new DraftError(`The AI service answered ${res.status}${/image/i.test(body) ? ' (this model may not read images: try another with --model)' : ''}: ${body.slice(0, 300)}`);
   let content;
   try {

@@ -8,15 +8,18 @@ export default {
   options: {
     photo: { type: 'string', multiple: true, description: 'A JPEG, PNG or WebP photo (up to 5, of one board or menu)' },
     out: { type: 'string', description: 'Folder for catalogue.csv and notes.md (default ./draft)' },
-    model: { type: 'string', description: 'AI model that reads images (default $GENTIFI_AI_MODEL)' },
+    model: { type: 'string', description: 'AI model that reads images (default $GENTIFI_AI_MODEL); several, comma-separated, are tried in turn' },
   },
   async run(values, { out, err }, _positionals, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
     const photos = values.photo ?? [];
     const folder = resolve(values.out ?? 'draft');
     let draft;
+    let model;
     try {
       out(`Reading ${photos.length} photo${photos.length === 1 ? '' : 's'} with ${values.model || env.GENTIFI_AI_MODEL || 'the AI model'} at ${env.GENTIFI_AI_URL || DEFAULT_AI_URL}…`);
-      draft = draftFromReply(await readPhotos(photos, { env, fetchImpl, model: values.model || env.GENTIFI_AI_MODEL }));
+      const reply = await readPhotos(photos, { env, fetchImpl, model: values.model || env.GENTIFI_AI_MODEL });
+      model = reply.model;
+      draft = draftFromReply(reply);
     } catch (e) {
       if (e instanceof DraftError) { err(e.message); return 1; }
       throw e;
@@ -28,9 +31,10 @@ export default {
     }
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, 'catalogue.csv'), toCsv(rows));
-    await writeFile(join(folder, 'notes.md'), notes(business, unreadable, rows, folder));
+    await writeFile(join(folder, 'notes.md'), notes(business, unreadable, rows, folder, model));
     const flagged = rows.filter((r) => r.check).length;
     out([
+      `Read with ${model}.`,
       `Drafted ${rows.length} item${rows.length === 1 ? '' : 's'}${flagged ? `, ${flagged} to check` : ''}: ${join(folder, 'catalogue.csv')}`,
       `What else the photo shows, to confirm: ${join(folder, 'notes.md')}`,
       '',
@@ -42,7 +46,7 @@ export default {
   },
 };
 
-function notes(business, unreadable, rows, folder) {
+function notes(business, unreadable, rows, folder, model) {
   const shown = [
     business.name && `- Name: ${business.name}`,
     ...business.openingHours.map((h) => `- Hours: ${h}`),
@@ -62,7 +66,7 @@ function notes(business, unreadable, rows, folder) {
   return [
     '# Draft from a photo: check before use',
     '',
-    'An AI model read these from the photo. It can misread, so confirm each with the business',
+    `An AI model (${model}) read these from the photo. It can misread, so confirm each with the business`,
     'before using it; the toolkit never fills in business details by itself.',
     '',
     '## Business details shown on the photo',
