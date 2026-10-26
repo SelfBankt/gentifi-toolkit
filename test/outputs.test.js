@@ -138,6 +138,15 @@ test('printed signs use the short link when there is one, and a bakery sheet car
   assert.match(skill, /never assume it is free from anything/);
 });
 
+test('the business name on both signs is in the serif, and signs.html loads the brand fonts', () => {
+  const out = files();
+  for (const f of ['badge.svg', 'counter-card.svg']) {
+    assert.match(out.get(f), /font-family="Fraunces, Georgia[^"]*"[^>]*>Hollow Lane Farm Shop<\/text>/);
+    assert.doesNotMatch(out.get(f), /font-family="Fraunces[^>]*>(Gentifi|Ask your AI about us)</, 'the serif is only for the shop');
+  }
+  assert.match(out.get('signs.html'), /@font-face \{ font-family: Fraunces; src: url\('https:\/\/gentifi\.com\/fonts\/Fraunces-variable-latin\.woff2'\)/);
+});
+
 test('the counter card falls back to a shorter ask line for a long business name', () => {
   const card = files(demoProject({ business: { name: 'The Old Mill Organic Farm Shop and Garden Centre' } })).get('counter-card.svg');
   assert.match(card, />Then ask your AI about us by name\.</);
