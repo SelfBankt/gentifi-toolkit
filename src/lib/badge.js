@@ -9,9 +9,21 @@ const WHITE = '#FFFFFF';
 const MUTED = '#B8C4D3';
 const SANS = "Sora, 'Sora Local', system-ui, -apple-system, 'Segoe UI', sans-serif";
 const MONO = "'IBM Plex Mono', ui-monospace, Menlo, monospace";
+// The real shop's voice: only the business's own name, never Gentifi's words (see gentifi.com's brand).
+const SERIF = "Fraunces, Georgia, 'Times New Roman', serif";
+const SERIF_STYLE = ` style="font-variation-settings: 'SOFT' 50, 'WONK' 0"`;
+// signs.html loads the brand fonts from gentifi.com, so printed signs match the site.
+const FONTS = 'https://gentifi.com/fonts';
 
 export function escapeXml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** The business's name in the serif, about 0.52em per character; squeezed only when it would overflow. */
+function serifText(text, { x, y, size, fill, maxWidth }) {
+  const natural = text.length * size * 0.52;
+  const fit = natural > maxWidth ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+  return `<text x="${x}" y="${y}" font-family="${SERIF}" font-size="${size}" font-weight="600" fill="${fill}"${SERIF_STYLE}${fit}>${escapeXml(text)}</text>`;
 }
 
 /** Monospace text is about 0.6em per character; squeeze it only when it would overflow. */
@@ -48,7 +60,7 @@ export function badgeSvg({ businessName, link }) {
 <line x1="87" y1="608" x2="913" y2="608" stroke="${TEAL_LINE}" stroke-width="2"/>
 <text font-family="${SANS}" font-weight="600" font-size="40" fill="${WHITE}"><tspan x="87" y="690">Scan to add us to</tspan><tspan x="87" y="740">your AI assistant</tspan></text>
 ${monoText(worksWith(), { x: 87, y: 798, size: 24, fill: COPPER, maxWidth: 500 })}
-${monoText(businessName, { x: 87, y: 850, size: 28, fill: WHITE, maxWidth: 500 })}
+${serifText(businessName, { x: 87, y: 852, size: 36, fill: WHITE, maxWidth: 500 })}
 ${monoText(shown, { x: 87, y: 890, size: 22, fill: MUTED, maxWidth: 500 })}
 <rect x="640" y="640" width="273" height="273" rx="30" fill="${WHITE}"/>
 <svg x="652" y="652" width="249" height="249" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path fill="${TEAL}" d="${qrPath(qr)}"/></svg>
@@ -57,9 +69,10 @@ ${monoText(shown, { x: 87, y: 890, size: 22, fill: MUTED, maxWidth: 500 })}
 }
 
 function centredText(text, { y, size, fill, weight = 400, font = SANS, maxWidth = 900, x = 525 }) {
-  const natural = text.length * size * (font === MONO ? 0.6 : 0.55);
+  const natural = text.length * size * (font === MONO ? 0.6 : font === SERIF ? 0.52 : 0.55);
   const fit = natural > maxWidth ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
-  return `<text x="${x}" y="${y}" text-anchor="middle" font-family="${font}" font-size="${size}" font-weight="${weight}" fill="${fill}"${fit}>${escapeXml(text)}</text>`;
+  const style = font === SERIF ? SERIF_STYLE : '';
+  return `<text x="${x}" y="${y}" text-anchor="middle" font-family="${font}" font-size="${size}" font-weight="${weight}" fill="${fill}"${style}${fit}>${escapeXml(text)}</text>`;
 }
 
 /**
@@ -84,11 +97,11 @@ export function counterCardSvg({ businessName, link }) {
 <title id="t">${escapeXml(label)}</title>
 <rect x="2" y="2" width="1046" height="1476" rx="60" fill="${WHITE}" stroke="${TEAL}" stroke-width="4"/>
 <g transform="translate(330 70) scale(0.95)">${MARK(TEAL, 10)}</g>
-<text x="460" y="155" font-family="${SANS}" font-weight="700" font-size="76" fill="${TEAL}">Gentifi</text>
+<text x="460" y="155" font-family="${SANS}" font-weight="700" font-size="76" fill="${TEAL}" textLength="236" lengthAdjust="spacingAndGlyphs">Gentifi</text>
 <g transform="translate(722 98) scale(2.6)"><circle cx="12" cy="12" r="11" fill="${COPPER}"/><path d="M6.5 12.5 L10.5 16.5 L17.5 8" fill="none" stroke="${TEAL}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>
 ${centredText('Ask your AI about us', { y: 320, size: 84, weight: 700, fill: TEAL })}
 ${centredText('Scan to add', { y: 410, size: 42, fill: TEAL })}
-${centredText(businessName, { y: 468, size: 48, weight: 700, fill: TEAL })}
+${centredText(businessName, { y: 470, size: 54, weight: 600, font: SERIF, fill: TEAL })}
 ${centredText('to your AI assistant.', { y: 526, size: 42, fill: TEAL })}
 ${centredText(askLine(businessName), { y: 584, size: 34, fill: '#3D4A5C' })}
 <rect x="225" y="640" width="600" height="600" rx="44" fill="${TEAL}"/>
@@ -110,6 +123,9 @@ export function signsHtml({ businessName, link }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gentifi signs for ${escapeXml(businessName)}</title>
 <style>
+  @font-face { font-family: Sora; src: url('${FONTS}/Sora-variable-latin.woff2') format('woff2'); font-weight: 400 700; }
+  @font-face { font-family: Fraunces; src: url('${FONTS}/Fraunces-variable-latin.woff2') format('woff2'); font-weight: 400 700; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('${FONTS}/IBMPlexMono-400-latin.woff2') format('woff2'); font-weight: 400; }
   @page { size: A4; margin: 12mm; }
   body { font-family: ${SANS}; color: ${TEAL}; margin: 24px; }
   .help { max-width: 40rem; margin-bottom: 24px; line-height: 1.5; }
