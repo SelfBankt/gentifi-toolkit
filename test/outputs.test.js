@@ -163,3 +163,41 @@ test('on the network connector, the scan page asks about the business by name, w
   assert.match(page, /href="https:\/\/chatgpt\.com\/\?q=Using%20Gentifi%2C/);
   assert.doesNotMatch(page, /Have they got/, 'questions name the business when the connector covers every business');
 });
+
+test('the business page leads with the shop: what it has, when that was checked, and where it is', () => {
+  const base = demoProject();
+  const project = {
+    ...base,
+    business: { ...base.business, telephone: '0117 496 0000', address: { street: '1 Hollow Lane', locality: 'Bristol', postcode: 'BS1 1AA' }, geo: { latitude: 51.45, longitude: -2.59 } },
+    catalogue: {
+      ...base.catalogue,
+      // Summer time: 08:10 UTC is 9.10am in the UK
+      updatedAt: '2026-07-04T08:10:00.000Z',
+      items: base.catalogue.items.map((i) => (i.sku === 'BRD-SD' ? { ...i, stock: 0, inStock: false, availability: 'Sold out', stockSource: 'owner', stockAsOf: '2026-07-04T10:05:00.000Z' } : i)),
+    },
+  };
+  const page = files(project).get('index.html');
+  assert.match(page, /<title>Hollow Lane Farm Shop, Bristol: what’s in, prices and opening hours<\/title>/);
+  assert.match(page, /<h1>Hollow Lane Farm Shop<\/h1>/);
+  assert.match(page, /<link rel="canonical" href="https:\/\/hollowlane\.example\/">/);
+  assert.doesNotMatch(page, /noindex/, 'a real shop is open to search engines');
+  assert.match(page, /Last checked by Hollow Lane Farm Shop at <time datetime="2026-07-04T08:10:00\.000Z">9\.10am on 4 July 2026<\/time>/);
+  assert.match(page, /Sold out <span class="when">\(<time datetime="2026-07-04T10:05:00\.000Z">11\.05am on 4 July 2026<\/time>\)/);
+  assert.match(page, /<dt>Address<\/dt><dd>1 Hollow Lane, Bristol, BS1 1AA<\/dd>/);
+  assert.match(page, /<dt>Phone<\/dt><dd><a href="tel:01174960000">0117 496 0000<\/a>/);
+  assert.ok(page.indexOf('id="stock"') < page.indexOf('id="add"'), 'stock and prices come before the add-to-your-AI steps');
+  assert.match(page, /<a class="jump" href="#add">Ask your AI about Hollow Lane Farm Shop<\/a>/);
+
+  const [business, webPage] = [...page.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
+  assert.deepEqual(business.geo, { '@type': 'GeoCoordinates', latitude: 51.45, longitude: -2.59 });
+  assert.equal(business.hasOfferCatalog.itemListElement[1].availability, 'https://schema.org/OutOfStock');
+  assert.equal(webPage['@type'], 'WebPage');
+  assert.equal(webPage.dateModified, '2026-07-04T08:10:00.000Z');
+  assert.equal(webPage.mainEntity['@id'], business['@id']);
+});
+
+test('a demo shop’s page says it is fictional and stays out of search', () => {
+  const page = files({ ...demoProject(), demo: true }).get('index.html');
+  assert.match(page, /<meta name="robots" content="noindex">/);
+  assert.match(page, /A fictional demo shop/);
+});
