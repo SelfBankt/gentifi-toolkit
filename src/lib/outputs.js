@@ -174,6 +174,7 @@ export function jsonLd(project, payees = []) {
     ...(b.telephone ? { telephone: b.telephone } : {}),
     ...(b.email ? { email: b.email } : {}),
     ...(hasAddress ? { address: { '@type': 'PostalAddress', streetAddress: a.street || undefined, addressLocality: a.locality || undefined, postalCode: a.postcode || undefined, addressCountry: 'GB' } } : {}),
+    ...(Number.isFinite(b.geo?.latitude) && Number.isFinite(b.geo?.longitude) ? { geo: { '@type': 'GeoCoordinates', latitude: b.geo.latitude, longitude: b.geo.longitude } } : {}),
     ...(b.area ? { areaServed: b.area } : {}),
     ...(b.openingHours?.length ? { openingHours: b.openingHours } : {}),
     ...(payees.length ? { paymentAccepted: payees.map((p) => (p.rail === 'lightning' ? 'Lightning (bitcoin)' : p.symbol)).join(', ') } : {}),
@@ -270,20 +271,56 @@ ${payees.length ? `If your app can show the customer a confirmation, \`pay_order
 }
 
 /** The page a phone opens after scanning the badge, for businesses that host their own files. */
+/** "9.10am on 11 November 2026", in UK time, for when stock and prices were last checked. */
+export function checkedAt(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const part = (options) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', ...options });
+  const clock = Object.fromEntries(part({ hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(at).map((x) => [x.type, x.value]));
+  const time = `${clock.hour}.${clock.minute}${(clock.dayPeriod || '').replace(/[\s.]/g, '').toLowerCase()}`;
+  return `${time} on ${part({ day: 'numeric', month: 'long', year: 'numeric' }).format(at)}`;
+}
+
+/** The page's own schema.org entry: what it is about and when it last changed. */
+export function webPageJsonLd(project, title) {
+  const base = baseUrl(project);
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    '@id': `${base}/`,
+    url: `${base}/`,
+    name: title,
+    inLanguage: 'en-GB',
+    dateModified: project.catalogue.updatedAt,
+    mainEntity: { '@id': `${base}/#business` },
+  };
+}
+
+/**
+ * The business's public page: what a sign's code opens, and what search engines and AI search read.
+ * The shop comes first (who it is, what it has, what it costs, when that was last checked, when
+ * it's open), then how to add it to an AI assistant.
+ */
 export function landingPage(project, payees = []) {
   const b = project.business;
   const e = escapeXml;
+  const base = baseUrl(project);
   const connector = mcpUrl(project);
   const currency = b.currency || 'GBP';
-  const rows = project.catalogue.items.map((i) => {
+  const items = project.catalogue.items;
+  const rows = items.map((i) => {
     const stock = inStock(i);
     const note = i.availability || (stock === true ? 'In stock' : stock === false ? 'Out of stock' : '');
-    return `<tr><td>${e(i.name)}</td><td>${e(describePrice(i, i.currency || currency))}</td><td>${e(note)}</td></tr>`;
+    // The owner's own mark from their phone carries the time they made it
+    const marked = i.stockSource === 'owner' && i.stockAsOf ? checkedAt(i.stockAsOf) : '';
+    const when = marked ? ` <span class="when">(<time datetime="${e(i.stockAsOf)}">${e(marked)}</time>)</span>` : '';
+    const about = i.description ? `<br><span class="small">${e(i.description)}</span>` : '';
+    return `<tr><td>${e(i.name)}${about}</td><td>${e(describePrice(i, i.currency || currency))}</td><td>${e(note)}${when}</td></tr>`;
   }).join('\n          ');
 
   const method = project.ordering?.method;
   const action = method === 'booking' ? 'book' : method === 'quote' ? 'ask for a quote' : method === 'checkout' ? 'order' : 'reserve something';
-  const firstItem = project.catalogue.items[0]?.name;
+  const firstItem = items[0]?.name;
   // On a Gentifi host, customers add the one network connector, so questions name the business
   const network = project.publish?.networkUrl;
   const addLink = network || connector;
@@ -305,25 +342,49 @@ export function landingPage(project, payees = []) {
   const linked = (text) => e(text).replace(/\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w/-]*\w)/g, '<a href="https://$1">$1</a>');
   const appSteps = ADD_APPS.map((app) => `<li><strong>${e(app)}:</strong> ${linked(ADD_STEPS[app])}</li>`).join('');
 
+  // Who and where, in words a person or an AI can quote
+  const a = b.address ?? {};
+  const address = [a.street, a.locality, a.postcode].filter(Boolean).join(', ');
+  const checked = checkedAt(project.catalogue.updatedAt);
+  const title = `${b.name}${a.locality ? `, ${a.locality}` : ''}: what’s in, prices and opening hours`;
+  const description = `What ${b.name} has in and what it costs${checked ? `, last checked at ${checked}` : ''}${b.openingHours?.length ? ', with opening hours' : ''}. From the shop’s own list.`;
+  const webLink = (url) => `<a href="${e(url)}">${e(url.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a>`;
+  const facts = [
+    address && `<dt>Address</dt><dd>${e(address)}</dd>`,
+    b.telephone && `<dt>Phone</dt><dd><a href="tel:${e(b.telephone.replace(/[^\d+]/g, ''))}">${e(b.telephone)}</a></dd>`,
+    /^https?:\/\//.test(b.website ?? '') && `<dt>Website</dt><dd>${webLink(b.website)}</dd>`,
+    b.openingHours?.length && `<dt>Opening hours</dt><dd><ul class="plain">${b.openingHours.map((h) => `<li>${e(humanHours(h))}</li>`).join('')}</ul></dd>`,
+  ].filter(Boolean).join('\n        ');
+  const ld = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+
   return `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ask your AI about ${e(b.name)}</title>
-<meta name="description" content="${e(`Add ${b.name} to your AI assistant, then ask what they have, prices and opening times.`)}">
+<title>${e(title)}</title>
+<meta name="description" content="${e(description)}">
+${project.demo ? '<meta name="robots" content="noindex">\n' : ''}<link rel="canonical" href="${e(base)}/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="${e(title)}">
+<meta property="og:description" content="${e(description)}">
+<meta property="og:url" content="${e(base)}/">
 <link rel="ard" href="ard.json">
 <link rel="icon" href="badge.svg" type="image/svg+xml">
-<script type="application/ld+json">${JSON.stringify(jsonLd(project, payees)).replace(/</g, '\\u003c')}</script>
+<script type="application/ld+json">${ld(jsonLd(project, payees))}</script>
+<script type="application/ld+json">${ld(webPageJsonLd(project, title))}</script>
 <style>
   :root { --teal: #05414D; --line: #1C5D69; --copper: #F09A5C; --grey: #E9EDF2; --muted: #B8C4D3; --ink-muted: #3D4A5C; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: Sora, system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--teal); background: #fff; line-height: 1.55; }
   .shell { max-width: 560px; margin: 0 auto; padding: 0 16px; }
-  header { background: var(--teal); color: #fff; padding: 28px 0 32px; }
+  header, section.teal { background: var(--teal); color: #fff; }
+  header { padding: 28px 0 32px; }
   .ready { color: var(--copper); font-size: .9rem; margin: 0 0 6px; }
   h1 { font-size: clamp(1.6rem, 7vw, 2.1rem); line-height: 1.15; margin: 0 0 12px; }
   .lede { color: var(--muted); margin: 0 0 20px; }
+  .demo { border: 1px dashed var(--copper); border-radius: 12px; padding: 10px 14px; color: #fff; font-size: .9rem; margin: 0 0 16px; }
+  .jump { display: inline-flex; align-items: center; min-height: 48px; padding: 0 20px; border-radius: 999px; background: var(--copper); color: var(--teal); font-weight: 600; text-decoration: none; }
   .connector { display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .connector code { flex: 1; padding: 12px 14px; font-size: .85rem; overflow-wrap: anywhere; color: #fff; }
   button { font: inherit; font-weight: 600; border: 0; background: var(--copper); color: var(--teal); padding: 0 18px; min-height: 48px; cursor: pointer; }
@@ -340,11 +401,15 @@ export function landingPage(project, payees = []) {
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grey); vertical-align: top; }
   th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); }
   ul { padding-left: 1.2em; margin: 0; }
+  ul.plain { list-style: none; padding: 0; }
   .small { font-size: .85rem; color: var(--ink-muted); }
+  .when { color: var(--ink-muted); white-space: nowrap; }
+  .checked { margin: 0 0 14px; font-weight: 600; }
+  .facts a { color: var(--teal); font-weight: 600; }
   details summary { cursor: pointer; font-weight: 600; }
   dd { margin: 0 0 8px; overflow-wrap: anywhere; }
   dt { font-weight: 600; margin-top: 10px; }
-  footer { background: var(--teal); color: var(--muted); padding: 24px 0 32px; font-size: .85rem; }
+  footer { background: var(--teal); color: var(--muted); padding: 24px 0 32px; font-size: .85rem; border-top: 1px solid var(--line); }
   footer a { color: #fff; }
   .ask { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
   .question { margin: 0 0 10px; color: #fff; font-weight: 600; }
@@ -357,36 +422,51 @@ export function landingPage(project, payees = []) {
 <body>
 <header>
   <div class="shell">
-    <p class="ready">&#10003; Agent-ready</p>
-    <h1>Add ${e(b.name)} to your AI assistant</h1>
-    <p class="lede">Then ask it what they have, prices and opening times, or to ${action}. You approve the connection, and every order, yourself.</p>
-    <ol class="steps">
-      <li>${network ? `Copy the Gentifi link. It includes ${e(b.name)}.` : 'Copy this link.'}
-        <div class="connector">
-          <code id="connector">${e(addLink)}</code>
-          <button type="button" data-copy="${e(addLink)}">Copy</button>
-        </div>
-      </li>
-      <li><ul>${appSteps}</ul></li>
-      ${askStep}
-    </ol>
-    <p class="approve">Using another AI app? Paste the link wherever it lets you add connectors (sometimes called MCP servers). Your app asks you to approve it, and nothing is added silently.</p>
+    <p class="ready">&#10003; On Gentifi</p>
+    <h1>${e(b.name)}</h1>
+    ${project.demo ? '<p class="demo">A fictional demo shop, for trying Gentifi out. Nothing here is real.</p>\n    ' : ''}<p class="lede">${b.description ? `${e(b.description)} ` : ''}${address ? `${e(address)}.` : ''}</p>
+    <a class="jump" href="#add">Ask your AI about ${e(b.name)}</a>
   </div>
 </header>
 <main>
-  <section class="grey">
+  <section class="grey" id="stock">
     <div class="shell">
-      <h2>Available now</h2>
+      <h2>What’s in, and what it costs</h2>
+      ${checked ? `<p class="checked">Last checked by ${e(b.name)} at <time datetime="${e(project.catalogue.updatedAt)}">${e(checked)}</time>.</p>` : ''}
       <table>
-        <caption class="small" style="caption-side: bottom; text-align: left; padding-top: 8px">Last updated ${e(project.catalogue.updatedAt.slice(0, 10))}</caption>
         <thead><tr><th scope="col">Item</th><th scope="col">Price</th><th scope="col">Availability</th></tr></thead>
         <tbody>
           ${rows}
         </tbody>
       </table>
+      <p class="small" style="margin: 12px 0 0">From ${e(b.name)}’s own list. Stock can change through the day, so anything marked by the shop shows the time it was marked.</p>
     </div>
   </section>
-  ${b.openingHours?.length ? `<section><div class="shell"><h2>Opening hours</h2><ul>${b.openingHours.map((h) => `<li>${e(humanHours(h))}</li>`).join('')}</ul></div></section>` : ''}
+  ${facts ? `<section id="visit">
+    <div class="shell">
+      <h2>Find ${e(b.name)}</h2>
+      <dl class="facts">
+        ${facts}
+      </dl>
+    </div>
+  </section>` : ''}
+  <section class="teal" id="add">
+    <div class="shell">
+      <h2>Add ${e(b.name)} to your AI assistant</h2>
+      <p class="lede">Then ask it what they have, prices and opening times, or to ${action}. You approve the connection, and every order, yourself.</p>
+      <ol class="steps">
+        <li>${network ? `Copy the Gentifi link. It includes ${e(b.name)}.` : 'Copy this link.'}
+          <div class="connector">
+            <code id="connector">${e(addLink)}</code>
+            <button type="button" data-copy="${e(addLink)}">Copy</button>
+          </div>
+        </li>
+        <li><ul>${appSteps}</ul></li>
+        ${askStep}
+      </ol>
+      <p class="approve">Using another AI app? Paste the link wherever it lets you add connectors (sometimes called MCP servers). Your app asks you to approve it, and nothing is added silently.</p>
+    </div>
+  </section>
   <section>
     <div class="shell">
       <h2>Your privacy</h2>

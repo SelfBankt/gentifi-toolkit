@@ -5,7 +5,7 @@ import { ProjectError, baseUrl, loadProject, mcpUrl, projectPath } from '../lib/
 import { VERSION } from '../lib/version.js';
 
 const DESCRIPTIONS = {
-  'index.html': 'scan-to-add page (what the badge opens)',
+  'index.html': 'the business’s public page: stock, prices and hours, then scan-to-add (what the badge opens)',
   'ard.json': 'discovery manifest (ARD), linked from the page',
   '.well-known/ard.json': 'discovery manifest at the domain root',
   '.well-known/ai-catalog.json': 'same manifest at the older path some tools read',
